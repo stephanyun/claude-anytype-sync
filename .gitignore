@@ -1,0 +1,8 @@
+# Never commit secrets or per-machine / auto-generated runtime state.
+config.json
+index.json
+skills_index.json
+guard.log
+conflict_backups/
+mirror-*/
+*.local

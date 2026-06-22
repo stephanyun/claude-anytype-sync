@@ -1,0 +1,21 @@
+{
+  "_comment": "MERGE this 'hooks' block into ~/.claude/settings.json (do not overwrite the whole file).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 ~/.claude/anytype/sync.py reconcile >/dev/null 2>&1 || true" },
+          { "type": "command", "command": "python3 ~/.claude/anytype/skills_catalog.py sync >/dev/null 2>&1 || true" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "python3 ~/.claude/anytype/hook.py" }
+        ]
+      }
+    ]
+  }
+}

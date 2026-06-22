@@ -1,0 +1,23 @@
+{
+  "_comment": "Per-machine config. Copy to ~/.claude/anytype/config.json, fill in, chmod 600. NEVER commit the real file (it holds api_key).",
+
+  "api_base": "http://localhost:31012/v1",
+  "_api_base_note": "Mac desktop app = http://localhost:31009/v1 ; headless anytype-cli = http://localhost:31012/v1",
+
+  "api_version": "2025-11-08",
+
+  "api_key": "<THIS MACHINE'S KEY>",
+  "_api_key_note": "Mac: Anytype Settings -> API Keys. Headless: `anytype auth apikey create <name>` (NOT the account key from `auth create`).",
+
+  "space_id": "bafyreibdobw2mhyvvn3h5jgx4zav5j2qncxztx5tozotwkypxczjpk2kyu.1wahn0imgkg5b",
+  "skills_space_id": "bafyreihzi5way4kc6ossmwqolyw2pttrbvgheqctysrgmwyz46uckwmdsq.1wahn0imgkg5b",
+
+  "skills_ns": "<UNIQUE PER MACHINE>",
+  "_skills_ns_note": "MUST be unique per machine or machines fight over the same skills namespace. In use: mac, ccabuc, xzabu. A 2nd Mac must NOT reuse 'mac' (e.g. macm2).",
+
+  "memory_dirs": {
+    "": "/home/<user>/.claude/projects/-home-<user>/memory",
+    "<ns>": "/home/<user>/.claude/projects/<workspace-project>/memory"
+  },
+  "_memory_dirs_note": "Key '' (main) is REQUIRED on every node (shared base; omitting it makes reconcile del_remote the bare-name pages from the authority). Add one entry per namespace this machine owns. To DOWNLOAD-but-not-recall another ns (e.g. jgb on a non-jgb box), point it at a non-project sink dir like /home/<user>/.claude/anytype/mirror-jgb."
+}
