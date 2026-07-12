@@ -36,6 +36,7 @@ Commands:
   pull                 overwrite local from Anytype (no deletes)
   list                 list synced objects
   dirs                 show configured memory dirs + local file counts
+  dedup [--apply]      report (or resolve) remote objects sharing one .md name
   test                 round-trip self-test
 """
 import json, os, sys, hashlib, urllib.request, urllib.error
@@ -197,13 +198,47 @@ def remote_list():
             and not o.get("archived")]
 
 
-def remote_items():
-    """{remote_name: {'id':.., 'raw':..}} for every .md page (fetches full md)."""
-    out = {}
+def remote_groups():
+    """{remote_name: [{'id':.., 'raw':..}, ...]} — every live .md object,
+    grouped by name so callers can see duplicates instead of losing them."""
+    groups = {}
     for o in remote_list():
         full = req("GET", f"/spaces/{space_id()}/objects/{o['id']}")
         md = full.get("object", full).get("markdown", "")
-        out[o["name"]] = {"id": o["id"], "raw": unwrap(md)}
+        groups.setdefault(o["name"], []).append(
+            {"id": o["id"], "raw": unwrap(md)})
+    return groups
+
+
+def remote_items():
+    """{remote_name: {'id':.., 'raw':..}} for every .md page (fetches full md).
+
+    Duplicate names are a data anomaly: Anytype lets two objects share one .md
+    name, and since a body update is delete+recreate (PATCH can't touch body), a
+    raced/crashed sync leaves two live objects for one name. The old code did
+    out[name]=... so the LAST one in /search order silently won — order isn't
+    stable, so reconcile flip-flopped between lineages every run (observed: one
+    MEMORY.md had 5 live objects with divergent indexes). Now we pick a
+    DETERMINISTIC winner (longest body = most complete, tie-broken by id) and
+    LOUDLY log every collision to guard.log so a human can merge + run `dedup`.
+    Winner choice never deletes anything; cleanup is the explicit `dedup` cmd."""
+    out, dups = {}, {}
+    for name, items in remote_groups().items():
+        if len(items) == 1:
+            out[name] = items[0]
+            continue
+        winner = max(items, key=lambda it: (len(it["raw"]), it["id"]))
+        out[name] = winner
+        dups[name] = {"kept": winner["id"],
+                      "others": [it["id"] for it in items if it is not winner]}
+    if dups:
+        with open(GUARD_LOG, "a") as f:
+            f.write("DUPLICATE remote names (kept longest, others untouched — "
+                    "run `sync.py dedup` to review/merge): "
+                    + json.dumps(dups, ensure_ascii=False) + "\n")
+        print("⚠️  同名遠端物件："
+              + "，".join(f"{n}×{len(d['others'])+1}" for n, d in dups.items())
+              + "（已取最長者，其餘未動；跑 `sync.py dedup` 檢視）")
     return out
 
 
@@ -246,6 +281,41 @@ def remote_delete(oid):
         req("DELETE", f"/spaces/{space_id()}/objects/{oid}")
     except urllib.error.HTTPError:
         pass
+
+
+def dedup(apply=False):
+    """Report (default) or resolve remote objects that share one .md name.
+
+    Report mode lists each collision with per-object index/line counts so a
+    human can decide. `--apply` keeps the longest body and archives the rest,
+    then points the manifest at the survivor — the same safe resolution done by
+    hand for the 5-way MEMORY.md split. It does NOT merge: if the objects have
+    diverged (each holds unique lines), archiving loses data, so MERGE FIRST
+    (edit the winner to hold the union) and only then run --apply."""
+    groups = {n: its for n, its in remote_groups().items() if len(its) > 1}
+    if not groups:
+        print("無同名遠端物件 ✅")
+        return
+    idx = load_index()
+    for name, items in groups.items():
+        winner = max(items, key=lambda it: (len(it["raw"]), it["id"]))
+        print(f"\n{name} — {len(items)} 個物件：")
+        for it in items:
+            lines = len([l for l in it["raw"].splitlines() if l.strip()])
+            mark = "  ← 保留(最長)" if it is winner else ""
+            print(f"  {it['id'][:20]}…  {len(it['raw']):6d} bytes  "
+                  f"{lines:3d} 非空行{mark}")
+        if apply:
+            for it in items:
+                if it is not winner:
+                    remote_delete(it["id"])
+            idx["items"][name] = {"id": winner["id"], "hash": chash(winner["raw"])}
+            print(f"  → 已封存 {len(items)-1} 個，manifest 指向 {winner['id'][:20]}…")
+    if apply:
+        save_index(idx)
+        print("\n⚠️  已套用。請跑 `sync.py reconcile` 確認收斂為全 0。")
+    else:
+        print("\n（僅報告。確認無資料歧異後，先合併 winner 再 `sync.py dedup --apply`）")
 
 
 def local_write(rname, raw):
@@ -483,5 +553,6 @@ if __name__ == "__main__":
     elif cmd == "list":     list_objects()
     elif cmd == "dirs":     show_dirs()
     elif cmd == "tag-all":  tag_all()
+    elif cmd == "dedup":    dedup(apply="--apply" in sys.argv)
     elif cmd == "test":     selftest()
     else:                   print(__doc__)
