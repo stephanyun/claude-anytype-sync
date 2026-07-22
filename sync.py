@@ -257,17 +257,36 @@ def local_items():
 
 # ---------- primitive ops ----------
 def remote_upsert(rname, raw, idx):
-    """Create or replace the Anytype page for remote name `rname`.
+    """Create or update the Anytype page for remote name `rname`.
 
-    NOTE: Anytype's PATCH does NOT update an object's body — only create sets it.
-    So to change content we delete the old object and create a fresh one.
+    Content updates go through PATCH {"markdown": ...}, which updates the body
+    in place and keeps the object id. (The old note here said PATCH cannot touch
+    a body — that was measured with the `body` field, which Anytype silently
+    ignores; `markdown` works, verified 2026-07-20.)
+
+    Updating in place is what stops duplicate-named objects from being born:
+    the previous delete-then-recreate path is how one MEMORY.md became five
+    live objects that took turns overwriting each other. If the PATCH does not
+    round-trip (HTTP error, or the re-read body doesn't match), fall back to
+    delete+recreate so an update never silently drops content.
     """
     new_hash = chash(raw)
     cur = idx["items"].get(rname)
     if cur and cur.get("id"):
         if cur.get("hash") == new_hash:
             return cur["id"]                 # unchanged -> skip
-        remote_delete(cur["id"])             # body changed -> replace via recreate
+        oid = cur["id"]
+        try:
+            req("PATCH", f"/spaces/{space_id()}/objects/{oid}",
+                {"markdown": wrap(raw)})
+            full = req("GET", f"/spaces/{space_id()}/objects/{oid}")
+            if chash(unwrap(full.get("object", full).get("markdown", ""))) == new_hash:
+                idx["items"][rname] = {"id": oid, "hash": new_hash}
+                set_project(oid, rname)      # tag can be dropped by edits; re-assert
+                return oid
+        except urllib.error.HTTPError:
+            pass
+        remote_delete(oid)                   # PATCH didn't take -> old path
     payload = {"type_key": "page", "name": rname, "body": wrap(raw)}
     res = req("POST", f"/spaces/{space_id()}/objects", payload)
     oid = res.get("object", res).get("id")
@@ -537,7 +556,16 @@ def selftest():
     full = req("GET", f"/spaces/{space_id()}/objects/{oid}")
     back = unwrap(full.get("object", full).get("markdown", ""))
     print("ROUND-TRIP:", "OK ✅" if norm(back) == norm(raw) else "MISMATCH ❌")
+    # 更新路徑：改內容後必須「就地更新」——id 不變才不會生同名物件
+    raw2 = raw.replace("使用者偏好繁中。", "使用者偏好繁中（已改）。")
+    oid2 = remote_upsert("test-roundtrip.md", raw2, idx)
+    full2 = req("GET", f"/spaces/{space_id()}/objects/{oid2}")
+    back2 = unwrap(full2.get("object", full2).get("markdown", ""))
+    print("UPDATE IN PLACE:", "OK ✅" if oid2 == oid else f"NEW OBJECT ❌ {oid}->{oid2}")
+    print("UPDATED BODY:", "OK ✅" if norm(back2) == norm(raw2) else "MISMATCH ❌")
     remote_delete(oid)
+    if oid2 != oid:
+        remote_delete(oid2)
     idx["items"].pop("test-roundtrip.md", None)
     save_index(idx)
     print("cleaned up")
