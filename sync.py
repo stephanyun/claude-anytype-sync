@@ -37,9 +37,11 @@ Commands:
   list                 list synced objects
   dirs                 show configured memory dirs + local file counts
   dedup [--apply]      report (or resolve) remote objects sharing one .md name
+  search <q> [--body]  full-text search; prints each hit's namespace + local
+                       path (so archived-out-of-recall memory stays findable)
   test                 round-trip self-test
 """
-import json, os, sys, hashlib, urllib.request, urllib.error
+import json, os, re, sys, hashlib, urllib.request, urllib.error
 
 CFG_PATH = os.path.expanduser("~/.claude/anytype/config.json")
 INDEX_PATH = os.path.expanduser("~/.claude/anytype/index.json")
@@ -571,10 +573,68 @@ def selftest():
     print("cleaned up")
 
 
+def search(query, limit=10, show_body=False):
+    """Full-text search the space and report where each hit lives locally.
+
+    Exists so memory can be moved OUT of a recall directory (archived) and
+    still be findable: the hit tells you the namespace and the exact local
+    path, so you can read the file directly instead of round-tripping the API.
+    Prints "(本機無檔)" when the object has no local mirror -- that means
+    reconcile would try to del_remote it, which is worth knowing.
+    """
+    res = req("POST", f"/spaces/{space_id()}/search?limit={limit}",
+              {"query": query, "types": ["page"]})
+    hits = [o for o in res.get("data", [])
+            if (o.get("name") or "").endswith(".md") and not o.get("archived")]
+    if not hits:
+        print(f"查無結果：{query}")
+        return
+    print(f"「{query}」→ {len(hits)} 筆\n")
+    for o in hits:
+        rname = o["name"]
+        ns, _ = parse_remote_name(rname)
+        path = local_path(rname)
+        exists = os.path.exists(path)
+        print(f"● {rname}")
+        print(f"  ns={ns or '(main)'}  {path}" + ("" if exists else "   ⚠️(本機無檔)"))
+        desc = ""
+        if exists:
+            # description lives in frontmatter; cheaper than refetching the body
+            with open(path, encoding="utf8") as f:
+                for line in f:
+                    if line.startswith("description:"):
+                        desc = line[12:].strip().strip('"')
+                        break
+        if not desc or show_body:
+            full = req("GET", f"/spaces/{space_id()}/objects/{o['id']}")
+            raw = unwrap(full.get("object", full).get("markdown", ""))
+            if not desc:
+                m = re.search(r"^description:\s*(.+)$", raw, re.M)
+                desc = m.group(1).strip().strip('"') if m else ""
+            if show_body:
+                body = raw.split("---", 2)[-1].strip()
+                print("  " + body[:400].replace("\n", "\n  ") + ("…" if len(body) > 400 else ""))
+        if desc:
+            print(f"  {desc[:160]}")
+        print()
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "list"
     force = "--force" in sys.argv
     if cmd == "reconcile": reconcile(force=force)
+    elif cmd == "search":
+        lim, terms, rest = 10, [], list(sys.argv[2:])
+        while rest:
+            a = rest.pop(0)
+            if a == "--limit" and rest:
+                lim = int(rest.pop(0))          # consume the value, not the query
+            elif not a.startswith("--"):
+                terms.append(a)
+        if not terms:
+            print("用法：sync.py search <關鍵字> [--body] [--limit N]")
+            sys.exit(1)
+        search(" ".join(terms), limit=lim, show_body="--body" in sys.argv)
     elif cmd == "push":     push_file(sys.argv[2])
     elif cmd == "push-all": push_all()
     elif cmd == "pull":     pull()
