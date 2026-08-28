@@ -14,12 +14,18 @@ HOSTNAME_SHORT="$(hostname -s 2>/dev/null || hostname)"
 
 log(){ echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 
+# macOS 沒有內建 timeout（GNU coreutils 才有）。有就用，沒有就直接跑。
+if command -v timeout >/dev/null 2>&1;   then TMO="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then TMO="gtimeout"
+else TMO=""; fi
+run_tmo(){ local secs="$1"; shift; if [ -n "$TMO" ]; then "$TMO" "$secs" "$@"; else "$@"; fi; }
+
 [ -d "$REPO/.git" ] || { log "❌ $REPO 不是 git repo，請先 clone"; exit 1; }
 [ -f "$CFG" ]       || { log "❌ 找不到 $CFG"; exit 1; }
 
 # --- 1) Anytype reconcile ---------------------------------------------------
 if [ -f "$SYNC" ]; then
-  OUT="$(cd "$HOME" && timeout 600 python3 "$SYNC" reconcile 2>&1 | tail -1)"
+  OUT="$(cd "$HOME" && run_tmo 600 python3 "$SYNC" reconcile 2>&1 | tail -1)"
   log "reconcile: $OUT"
   CONFLICT="$(echo "$OUT" | grep -oE 'conflict [0-9]+' | grep -oE '[0-9]+' || echo 0)"
   if [ "${CONFLICT:-0}" -gt 0 ]; then
