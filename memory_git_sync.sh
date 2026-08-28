@@ -56,6 +56,39 @@ while IFS=$'\t' read -r ns dir; do
 done < "$PAIRS_FILE"
 rm -f "$PAIRS_FILE"
 
+# --- 2b) 正規化快照 ---------------------------------------------------------
+# Anytype 的 markdown round-trip 會在 YAML frontmatter 行尾留下不固定的空白
+# （實測 178/179 個檔在兩台之間只差 "metadata:" 後面那個空格）。
+# 不正規化的話，兩台的排程會每小時互相翻案，repo 全是雜訊 commit。
+# 只清 frontmatter 區塊的行尾空白 —— 正文不動，因為 markdown 的行尾兩空格是換行語意。
+python3 - "$REPO" <<'PYNORM'
+import os,sys,io
+root=sys.argv[1]; n=0
+for dirpath,dirnames,filenames in os.walk(root):
+    if ".git" in dirpath.split(os.sep): continue
+    for fn in filenames:
+        if not fn.endswith(".md"): continue
+        fp=os.path.join(dirpath,fn)
+        try: t=io.open(fp,encoding="utf-8").read()
+        except Exception: continue
+        lines=t.split("\n"); out=[]; infm=False; seen=0; changed=False
+        for i,l in enumerate(lines):
+            if l.strip()=="---" and seen<2 and (i==0 or infm):
+                seen+=1; infm=(seen==1); out.append(l); continue
+            if infm:
+                st=l.rstrip()
+                if st!=l: changed=True
+                out.append(st)
+            else:
+                out.append(l)
+        t2="\n".join(out)
+        if not t2.endswith("\n"): t2+="\n"; changed=True
+        while t2.endswith("\n\n"): t2=t2[:-1]; changed=True
+        if changed:
+            io.open(fp,"w",encoding="utf-8").write(t2); n+=1
+print("正規化 %d 檔" % n)
+PYNORM
+
 # --- 3) commit + push --------------------------------------------------------
 git add -A
 if git diff --cached --quiet; then
