@@ -8,8 +8,8 @@
 import json, subprocess, sys, os, urllib.request, socket
 from collections import Counter
 
-HOSTS = os.environ.get("FLEET_HOSTS",
-    "m1-16 m2-13 cc-abu-c xz-pve-aide m2-mini i5-13 xz-stilla").split()
+DEFAULT_HOSTS = "m1-16 m2-13 cc-abu-c xz-pve-aide m2-mini i5-13 xz-stilla".split()
+HOSTS = os.environ.get("FLEET_HOSTS", " ".join(DEFAULT_HOSTS)).split()
 if "--hosts" in sys.argv:
     HOSTS = sys.argv[sys.argv.index("--hosts") + 1].split()
 
@@ -162,7 +162,8 @@ def main():
     dup = [n for n, c in ns_seen.items() if c > 1 and n]
     if dup:
         print("✗ skills_ns 重複：" + ",".join(dup) + "（會互刪對方的 skill 頁）"); fails.append("ns")
-    orphan = set(ns_hist) - set(ns_seen)
+    # 只稽核部分機器時，其他機器的 ns 當然不在 ns_seen 裡，不算孤兒
+    orphan = set(ns_hist) - set(ns_seen) - set(DEFAULT_HOSTS)
     if orphan: print("⚠ Anytype skills 有孤兒 ns（機器已不在名單）：" + ",".join(sorted(orphan)))
     if truth["arch"]: print(f'⚠ Anytype 仍有 {truth["arch"]} 個 arch__ 物件（v5 起應為 0）')
     print(("FAIL：" + ",".join(sorted(set(fails)))) if fails else f"PASS：{len(HOSTS)} 台全數符合 SOP")
