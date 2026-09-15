@@ -102,8 +102,11 @@ def main():
     back_lines = set(l.strip() for l in back.split('\n'))
     lost = [l for l in new.split('\n') if l.strip() and l.strip() not in back_lines
             and not l.lstrip().startswith('|')]
-    sent_h2 = set(l.strip() for l in new.split('\n') if l.startswith('## '))
-    bad = [l for l in back.split('\n') if l.startswith('## ') and l.strip() not in sent_h2]
+    # Anytype 會把標題裡的 `inline code` 與 **粗體** 標記吃掉，比對前先正規化，
+    # 否則每個帶反引號的標題都會被誤報成「被 --- 吃掉的 H2」。
+    norm = lambda s: re.sub(r'[`*_]', '', s).strip()
+    sent_h2 = set(norm(l) for l in new.split('\n') if l.startswith('## '))
+    bad = [l for l in back.split('\n') if l.startswith('## ') and norm(l) not in sent_h2]
     print('✓ %s 已 PATCH：回讀缺行 %d、多出的 H2 %d' % (title, len(lost), len(bad)))
     for l in lost[:5]:
         print('   缺:', l[:90])
