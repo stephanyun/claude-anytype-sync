@@ -36,6 +36,9 @@ def resolve(keyword):
                 hits.append((sp['id'], o['id'], o.get('name')))
     if not hits:
         sys.exit('✗ 找不到含「%s」的頁' % keyword)
+    exact = [h for h in hits if h[2] == keyword or h[2].endswith('｜' + keyword)]
+    if len(exact) == 1:
+        return exact[0]
     if len(hits) > 1:
         sys.exit('✗ 多筆命中，請給更精確的關鍵字：' + '、'.join(h[2] for h in hits))
     return hits[0]
