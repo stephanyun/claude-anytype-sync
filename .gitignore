@@ -4,6 +4,7 @@ index.json
 skills_index.json
 guard.log
 conflict_backups/
+basecache/
 mirror-*/
 *.local
 __pycache__/

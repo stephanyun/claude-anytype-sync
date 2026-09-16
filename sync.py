@@ -25,6 +25,11 @@ anytype-now) distinguishes add / modify / delete on either side:
   - new on a side      -> propagate to the other side
   - modified           -> Anytype wins (source of truth); conflicts back up local
   - deleted on a side  -> delete on the other side
+  - both modified, and the file is an INDEX file (MEMORY.md / <ns>__MEMORY.md)
+    -> three-way line MERGE instead, then push the merge back so both sides
+       converge. Index files are append-mostly (every machine adds its own
+       pointer rows), so "one side wins" silently drops the other machine's
+       rows. The last-synced text needed for the merge lives in basecache/.
 A SAFETY GUARD aborts the whole reconcile if it would delete a suspicious bulk
 (>=50% of tracked items, or either side reads empty while the manifest isn't) --
 this prevents an API/FS glitch from wiping everything. Override with --force.
@@ -41,12 +46,13 @@ Commands:
                        path (so archived-out-of-recall memory stays findable)
   test                 round-trip self-test
 """
-import json, os, re, sys, hashlib, urllib.request, urllib.error
+import json, os, re, sys, hashlib, difflib, urllib.request, urllib.error
 
 CFG_PATH = os.path.expanduser("~/.claude/anytype/config.json")
 INDEX_PATH = os.path.expanduser("~/.claude/anytype/index.json")
 GUARD_LOG = os.path.expanduser("~/.claude/anytype/guard.log")
 BACKUP_DIR = os.path.expanduser("~/.claude/anytype/conflict_backups")
+BASECACHE_DIR = os.path.expanduser("~/.claude/anytype/basecache")
 LEGACY_MEMORY_DIR = "/Users/abu/.claude/projects/-Users-abu/memory"
 SEP = "__"  # namespace separator inside remote page names
 
@@ -273,6 +279,7 @@ def remote_upsert(rname, raw, idx):
     delete+recreate so an update never silently drops content.
     """
     new_hash = chash(raw)
+    base_write(rname, raw)                   # both sides now agree on this text
     cur = idx["items"].get(rname)
     if cur and cur.get("id"):
         if cur.get("hash") == new_hash:
@@ -356,6 +363,210 @@ def backup_local(rname, raw):
     os.makedirs(BACKUP_DIR, exist_ok=True)
     with open(os.path.join(BACKUP_DIR, rname + ".local"), "w") as f:
         f.write(raw)
+
+
+# ---------- base cache: the last text both sides agreed on ----------
+# The manifest only keeps a hash, which answers "changed?" but not "changed
+# from WHAT" -- and you cannot merge without the original. So every time the
+# two sides agree on a text (push, pull, equal, successful merge) we drop that
+# text here, keyed by remote name. Losing this dir is not fatal: the merge
+# degrades to a union (see union_index).
+def base_path(rname):
+    return os.path.join(BASECACHE_DIR, rname)
+
+
+def base_read(rname):
+    p = base_path(rname)
+    if not os.path.exists(p):
+        return None
+    with open(p) as f:
+        return f.read()
+
+
+def base_write(rname, raw):
+    try:
+        os.makedirs(BASECACHE_DIR, exist_ok=True)
+        with open(base_path(rname), "w") as f:
+            f.write(raw if raw.endswith("\n") else raw + "\n")
+    except OSError as e:                      # cache only -- never fail a sync
+        sys.stderr.write(f"base_write warn ({rname}): {e}\n")
+
+
+def base_delete(rname):
+    try:
+        os.remove(base_path(rname))
+    except OSError:
+        pass
+
+
+# ---------- three-way merge, index files only ----------
+def is_index_file(rname):
+    """MEMORY.md / <ns>__MEMORY.md -- the per-machine memory indexes.
+
+    These are append-mostly: each machine writes a memory file AND adds one
+    pointer row to the index, so two machines legitimately touch the same file
+    between syncs. Taking one side whole loses the other's rows -- on
+    2026-09-17 the 'macOS 系統代理' row disappeared that way (the memory file
+    itself survived; nothing pointed at it any more). Everything else keeps the
+    plain Anytype-wins rule: those files are written whole by one author."""
+    return rname == "MEMORY.md" or rname.endswith(SEP + "MEMORY.md")
+
+
+def _lines(raw):
+    return norm(raw).split("\n")
+
+
+def _text(lines):
+    return "\n".join(lines).strip("\n") + "\n"
+
+
+def _edit_script(base, side):
+    """How `side` changed `base`, per base line.
+
+    Returns (ins, rep):
+      ins[i]  lines this side inserted *before* base line i (i == len(base)
+              means appended at EOF)
+      rep[i]  what base line i became: [base[i]] untouched, [] deleted, or the
+              replacement lines.
+    Per-base-line granularity is the point. Chunk-level diff3 calls "you
+    appended a row / I appended a different row" a conflict, which is the one
+    thing index files do constantly."""
+    ins, rep = {}, [[l] for l in base]
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(
+            None, base, side, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        if tag == "insert":
+            ins.setdefault(i1, []).extend(side[j1:j2])
+            continue
+        rep[i1] = side[j1:j2] if tag == "replace" else []
+        for i in range(i1 + 1, i2):
+            rep[i] = []                       # region folded into rep[i1]
+    return ins, rep
+
+
+def _counts(lines):
+    c = {}
+    for l in lines:
+        if l.strip():
+            c[l] = c.get(l, 0) + 1
+    return c
+
+
+def _gained(kept, other):
+    """How many non-blank lines survived in `kept` that `other` did not have."""
+    co, n = _counts(other), 0
+    for l in kept:
+        if not l.strip():
+            continue
+        if co.get(l):
+            co[l] -= 1
+        else:
+            n += 1
+    return n
+
+
+def merge_index(base, lraw, rraw):
+    """Line-level three-way merge. Returns (text, stats).
+
+    With a base we can tell apart the cases the old code confused:
+      - a line only one side added   -> keep it (the other side never had it)
+      - a line one side deleted      -> really delete it (do NOT resurrect it
+                                        from the other side's stale copy)
+      - the same line changed both ways -> a real conflict; Anytype wins, and
+        the caller has already backed the local original up."""
+    B, A, R = _lines(base), _lines(lraw), _lines(rraw)
+    insA, repA = _edit_script(B, A)
+    insR, repR = _edit_script(B, R)
+    out, conflict = [], 0
+    for i in range(len(B) + 1):
+        add_r, add_a = insR.get(i, []), insA.get(i, [])
+        out += add_r                          # Anytype's order leads
+        out += [l for l in add_a if l not in add_r]   # both added it -> once
+        if i == len(B):
+            break
+        ra, rr = repA[i], repR[i]
+        if ra == [B[i]]:
+            out += rr                         # only Anytype touched this line
+        elif rr == [B[i]]:
+            out += ra                         # only this machine touched it
+        elif ra == rr:
+            out += ra                         # same edit on both sides
+        else:
+            out += rr                         # real conflict -> Anytype wins
+            conflict += max(len(ra), len(rr), 1)
+    # a line lost to a conflict is already reported as a conflict; only count
+    # the rest as "really deleted", or the message double-bills the same line
+    dropped = max(0, _gained(A, out) + _gained(R, out) - conflict)
+    return _text(out), {"from_local": _gained(out, R),
+                        "from_remote": _gained(out, A),
+                        "dropped": dropped, "conflict": conflict}
+
+
+def union_index(lraw, rraw):
+    """No base cached -> keep every line from both sides.
+
+    Without the original we cannot tell "they added it" from "I deleted it",
+    and wrongly deleting is the failure we are fixing, so union is the safe
+    guess. Anytype's order leads; a local-only row is re-inserted next to the
+    neighbours it had locally (not appended at the end) so it stays under the
+    right heading. A local-only line that already appears somewhere in the
+    Anytype copy is dropped -- it moved, it is not new."""
+    A, R = _lines(lraw), _lines(rraw)
+    rset = {l for l in R if l.strip()}
+    out, recovered = [], 0
+
+    def take_local(seg):
+        nonlocal recovered
+        for l in seg:
+            if l.strip():
+                if l in rset:
+                    continue
+                recovered += 1
+            elif out and not out[-1].strip():
+                continue                      # don't stack blank lines
+            out.append(l)
+
+    sm = difflib.SequenceMatcher(None, R, A, autojunk=False)
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag in ("equal", "delete"):
+            out += R[i1:i2]                   # shared, or Anytype-only
+        elif tag == "insert":
+            take_local(A[j1:j2])
+        else:                                 # replace: keep both, Anytype first
+            out += R[i1:i2]
+            take_local(A[j1:j2])
+    return _text(out), {"from_local": recovered, "from_remote": _gained(out, A),
+                        "dropped": 0, "conflict": 0}
+
+
+def merge_index_conflict(rname, lraw, rinfo, idx):
+    """Both sides changed one index file: merge, write, and push the merge back
+    so Anytype and every machine converge on the same text (writing only the
+    local copy would just re-raise the same conflict on the next machine)."""
+    base = base_read(rname)
+    if base is None:
+        merged, st = union_index(lraw, rinfo["raw"])
+        how = "聯集（無 base 快取）"
+    else:
+        merged, st = merge_index(base, lraw, rinfo["raw"])
+        how = "三方合併"
+    # point the manifest at the object we actually read, so the push PATCHes
+    # that one rather than a stale id from an earlier lineage
+    idx["items"][rname] = {"id": rinfo["id"], "hash": chash(rinfo["raw"])}
+    local_write(rname, merged)
+    remote_upsert(rname, merged, idx)
+    base_write(rname, merged)
+    detail = (f"  ⇄ {rname} {how}：本機救回 {st['from_local']} 行、"
+              f"Anytype 收進 {st['from_remote']} 行、"
+              f"真衝突 {st['conflict']} 行")
+    if st["dropped"]:
+        detail += f"、確實刪除 {st['dropped']} 行"
+    print(detail)
+    if st["conflict"]:
+        print(f"     ⚠️ 真衝突那 {st['conflict']} 行採 Anytype 版，"
+              f"本機原稿在 conflict_backups/{rname}.local")
+    return st
 
 
 # ---------- group memories by namespace via the built-in "tag" property ----------
@@ -444,6 +655,7 @@ def pull():
     idx = load_index()
     for rname, info in remote_items().items():
         local_write(rname, info["raw"])
+        base_write(rname, info["raw"])
         idx["items"][rname] = {"id": info["id"], "hash": chash(info["raw"])}
         print("pulled  ", rname)
     save_index(idx)
@@ -480,13 +692,14 @@ def reconcile(force=False):
     names = set(manifest) | set(L) | set(R)
 
     plan = {"push": [], "pull": [], "del_local": [], "del_remote": [],
-            "conflict": []}
+            "conflict": [], "merge": []}
     for n in sorted(names):
         inL, inR, inM = n in L, n in R, n in manifest
         if inL and inR:
             lh, rh = chash(L[n]), chash(R[n]["raw"])
             if lh == rh:
                 manifest[n] = {"id": R[n]["id"], "hash": lh}   # baseline hashes
+                base_write(n, R[n]["raw"])   # agreed text = next merge's base
                 continue
             mh = manifest[n].get("hash") if inM else None
             lchg = (mh is None) or (mh != lh)
@@ -495,6 +708,8 @@ def reconcile(force=False):
                 plan["pull"].append(n)
             elif lchg and not rchg:
                 plan["push"].append(n)
+            elif is_index_file(n):
+                plan["merge"].append(n)           # both changed -> line merge
             else:
                 plan["conflict"].append(n)        # both changed -> Anytype wins
         elif inL and not inR:
@@ -527,22 +742,27 @@ def reconcile(force=False):
     # ---- APPLY ----
     for n in plan["pull"]:
         local_write(n, R[n]["raw"])
+        base_write(n, R[n]["raw"])
         manifest[n] = {"id": R[n]["id"], "hash": chash(R[n]["raw"])}
     for n in plan["push"]:
         remote_upsert(n, L[n], idx)
+    merge_stats = {}
+    for n in plan["merge"]:
+        backup_local(n, L[n])                      # keep local copy regardless
+        merge_stats[n] = merge_index_conflict(n, L[n], R[n], idx)
     for n in plan["conflict"]:
         backup_local(n, L[n])                      # keep local copy before overwrite
         local_write(n, R[n]["raw"])
         manifest[n] = {"id": R[n]["id"], "hash": chash(R[n]["raw"])}
     for n in plan["del_local"]:
-        local_delete(n); manifest.pop(n, None)
+        local_delete(n); base_delete(n); manifest.pop(n, None)
     for n in plan["del_remote"]:
-        remote_delete(manifest[n]["id"]); manifest.pop(n, None)
+        remote_delete(manifest[n]["id"]); base_delete(n); manifest.pop(n, None)
 
     save_index(idx)
     print(f"reconcile: +push {len(plan['push'])}  +pull {len(plan['pull'])}  "
           f"-local {len(plan['del_local'])}  -remote {len(plan['del_remote'])}  "
-          f"conflict {len(plan['conflict'])}")
+          f"merge {len(plan['merge'])}  conflict {len(plan['conflict'])}")
     if plan["conflict"]:
         print("  衝突（兩邊都改，已採 Anytype 版，本機原稿備份於 conflict_backups/）:",
               plan["conflict"])
@@ -569,6 +789,7 @@ def selftest():
     if oid2 != oid:
         remote_delete(oid2)
     idx["items"].pop("test-roundtrip.md", None)
+    base_delete("test-roundtrip.md")
     save_index(idx)
     print("cleaned up")
 

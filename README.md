@@ -15,7 +15,7 @@ These three **must be byte-identical on every node.** This repo is the source of
 ## What is NOT in this repo (and why)
 - `config.json` — per-machine, holds the secret `api_key`. Use `config.template.json`. Gitignored.
 - `~/.claude/settings.json` — merge the `hooks` block from `settings.hooks.json` (don't overwrite).
-- `index.json`, `skills_index.json`, `guard.log`, `conflict_backups/`, mirrored `.md`, `mirror-*/` sinks — auto-generated runtime state. Gitignored.
+- `index.json`, `skills_index.json`, `guard.log`, `conflict_backups/`, `basecache/`, mirrored `.md`, `mirror-*/` sinks — auto-generated runtime state. Gitignored.
 - The anytype-cli binary — installed per machine via the official `anyproto/anytype-cli` install.sh, not vendored.
 
 ## Deploy to a machine
