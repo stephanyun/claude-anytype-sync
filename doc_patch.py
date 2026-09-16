@@ -9,7 +9,9 @@
 以及回讀驗證改成「比對送出的 H2 集合」而不是寫死 `## 一、` 格式。
 """
 import json, os, re, sys, urllib.request
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# realpath 不是 abspath：部署目錄 ~/.claude/anytype/ 的這支是 symlink，
+# 用 abspath 會去 symlink 旁邊找 md_clean，那裡沒有（只有 repo 裡有）。
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from md_clean import clean as md_clean
 
 CFG = json.load(open(os.path.expanduser('~/.claude/anytype/config.json')))
