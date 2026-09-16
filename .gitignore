@@ -6,3 +6,4 @@ guard.log
 conflict_backups/
 mirror-*/
 *.local
+__pycache__/

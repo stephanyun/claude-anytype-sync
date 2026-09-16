@@ -9,6 +9,8 @@
 以及回讀驗證改成「比對送出的 H2 集合」而不是寫死 `## 一、` 格式。
 """
 import json, os, re, sys, urllib.request
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from md_clean import clean as md_clean
 
 CFG = json.load(open(os.path.expanduser('~/.claude/anytype/config.json')))
 SPACE_PREF = ('上下文庫', '技術文件')
@@ -80,7 +82,11 @@ def fetch(sid, oid):
     md = o.get('markdown') or ''
     if not md:
         sys.exit('✗ 頁面抓到了但 markdown 是空的')
-    return denorm(unescape(md))
+    # denorm 只剝渲染修飾；md_clean 還做兩件 denorm 不做、但不做就會累積損壞的事：
+    #   (a) 表格整列重寫（原樣回填頂層表格會整張散掉）
+    #   (b) astral-plane emoji → BMP（🛑 這種 4-byte 字會讓同段的 ` 與 ** 每 round-trip 右移一格）
+    # 見 memory anytype-api-doc-write-corrupts / anytype-patch-markdown-updates-body。
+    return md_clean(denorm(unescape(md)))
 
 
 def main():
@@ -90,8 +96,8 @@ def main():
 
     if mode == '--dump':
         base = fetch(sid, oid)
-        if denorm(base) != base:
-            sys.exit('✗ denorm 不是冪等的')
+        if md_clean(denorm(base)) != base:
+            sys.exit('✗ 清理不是冪等的')
         open(path, 'w', encoding='utf-8').write(base)
         print('✓ %s → %s（%d bytes）' % (title, path, len(base)))
         return
