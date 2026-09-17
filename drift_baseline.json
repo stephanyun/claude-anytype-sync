@@ -1,0 +1,159 @@
+{
+ "accepted": [
+  [
+   "CORE｜memory 與 skills 同步機制",
+   "MARK",
+   "- **粗體橫跨 inline code 時整組右移**：Anytype 會把粗體重新錨定到它包住的那顆 code span 上，嚴重時 `**` 會跑進 code span 裡變成字面字元。避法是別讓粗體跨越反引號"
+  ],
+  [
+   "CORE｜memory 與 skills 同步機制",
+   "MARK",
+   "- 收尾的 `**` 後面**要留一個空白**再接中文，`**短語：**後文` 這種緊貼寫法會讓整組粗體被挪到後面那顆 code span 或下一組粗體上"
+  ],
+  [
+   "CORE｜memory 與 skills 同步機制",
+   "MARK",
+   "- 段落只要含一個 **astral-plane emoji**（U+10000 以上），該段所有 `**` 與反引號**每寫回一次就右移一格**。根治＝`md_clean.ASTRAL` 換成 BMP 字元；那張表要涵蓋全庫用到的每一種，漏一種那一種就繼續歪"
+  ],
+  [
+   "FLEET｜翻牆 VPN",
+   "MARK",
+   "- 寫這支腳本踩到的坑：bash 在 `$PORT）`、`$LOG，` 這種**中文字緊接在變數後面**時會把中文併進變數名，`set -u` 直接 unbound variable 陣亡。變數一律寫 `${PORT}`。同一個坑的 PHP 版見 `php-cjk-string-interpolation-eats-punctuation`。"
+  ],
+  [
+   "JGB｜Monday 工單流程",
+   "MARK",
+   "**代過需求審核＝直接壓板上欄位**，不是回覆文字：`change_column_value` 把「需求審核」設成 `需求已核可`，watcher 的 `sweep_requirement_review()` 一分鐘內轉 executing。`[guard] … abu 本人，放行` 那行就是確認生效。"
+  ],
+  [
+   "JGB｜Monday 工單流程",
+   "MARK",
+   "- 也自動評 CIA 三欄並貼成一則 update，**每一項後面接一句白話依據**（例：`・C 機密性（…）：高風險 依據：帳單信件外流他人姓名和身分證字號`）。prompt 明訂 **20 字內、不准出現檔名／欄位名／函式名／錯誤代碼／程式術語**（讀者是 PM），且不准複述風險等級本身。⚠️ **依據缺了照樣要貼評級**（評級是主體，依據是加分項）。只影響往後新貼的，舊單不回頭補。"
+  ],
+  [
+   "JGB｜Monday 工單流程",
+   "MARK",
+   "- 看到使用者訊息開頭是 `monday `，視為觸發語法，不要當成普通工程問題盤查。"
+  ],
+  [
+   "JGB｜Monday 工單流程",
+   "MARK",
+   "2. **截圖／附件算需求**：PM 常常只丟一張圖，那種 `text_body` 是空的。`_update_has_content()` 純文字空的時候要回頭看 HTML 有沒有 `<img` / `data-asset_id` / `<a `，否則會白等 30 分鐘。"
+  ],
+  [
+   "JGB｜Monday 工單流程",
+   "MARK",
+   "PM 問「進度」時，判讀器正確判成 `unrelated(0.90:僅問進度，未表態)` 然後什麼都不做、也不回話（累計 50 次）。**系統其實知道「這是問進度」也知道「現在卡在哪一階段」，只是沒把兩者接起來。**→ **問進度就回進度，並明講球在誰手上。**"
+  ],
+  [
+   "JGB｜Monday 工單流程",
+   "MARK",
+   "省事的做法：在 parent commit 跑完後直接 `python3 scripts/regression_check.py --emit junit-parent.xml > /tmp/baseline-parent.txt`，再拿自己那份 junit 對這份臨時基準跑一次，直接得到 `PASS: 紅字 N（全部在既有基準內），無新增` 的判定。⚠️ 跑 parent 前先 `cp junit-run.xml junit-mine.xml` 保存自己那份。"
+  ],
+  [
+   "JGB｜合約簽署與PDF",
+   "MARK",
+   "2. ⚠️ **多行 stack trace 要合併**，否則一個 exception 會變幾十則、告警計數也會爆掉。用 `multi_line_start_pattern` 比對行首 `[YYYY-MM-DD `"
+  ],
+  [
+   "JGB｜合約簽署與PDF",
+   "MARK",
+   "⚠️ **有人回報「合約突然送不出去」＝這道檢查在擋，不是壞掉。** 看 log `thinkcloud create: 合約附件不完整，中止送件` 就知道是哪份附件抓不到。以前的行為是悄悄讓人簽一份缺附件的合約。"
+  ],
+  [
+   "JGB｜帳單金流與虛擬帳號",
+   "MARK",
+   "3. **無主入帳變成幽靈團隊**：`❌ 銀行有、系統無`（`role_id` 空）那列若被填「確認出款」，出款表上會長出團隊「(查無對應團隊)」，看起來完全正常卻誰也匯不出去。兩層擋：`read_correction_xlsx()` 擋下並告訴他改填 `保留下期`／`確認不出款`；`build_payout()` 也再擋一次。"
+  ],
+  [
+   "JGB｜帳單金流與虛擬帳號",
+   "MARK",
+   "⚠️ 另一種型態（**永豐有推送但回查撲空**）：永豐的到款通知會早於它自己 OrderPayQuery 的可查詢時點，回 `S0001 – 處理成功，查無資料或是查詢條件組合不相符`。此時 `PaymentController` 記 `Log::error` 後 `return`（不回 `Status=S`）——這個「不回 S」正是觸發永豐自動重送的機制，日後修改**不可**改成無條件回 S。永豐約每 10 分鐘重送一次，實測第 3 次（付款後約 23 分）轉 `S0000` 正常入帳。判定法：同一 PayToken 多次 `永豐訊息查詢結果API/解密後` 紀錄，看 Description 是否最終轉 S0000。屬 0.04% 偶發。該 ERROR 是「款項永久卡住」的唯一警報，不宜只為降噪關掉。"
+  ],
+  [
+   "JGB｜帳單金流與虛擬帳號",
+   "MARK",
+   "標題「出帳金額明細」；欄位＝`物件｜租客｜帳單編號｜帳單ID｜帳務日期｜收款金額｜代收手續費｜最後出帳金額｜備註`。**代收手續費逐列列出**，尾巴三行：`合計` → `出帳手續費（每次 30 元）` → `總出帳金額`。"
+  ],
+  [
+   "JGB｜測試與回歸守門",
+   "MARK",
+   "**幽靈帳單守衛（已上 prod）**：`Contract::genBill()`（bill:gen 租金）與 `BillAmercementNotify`（bill:amercement-notify 滯納金 02:00）原本不檢查 role/user 狀態，會對已停用團隊繼續產帳單。兩支都已加守衛：`role active=0（或不存在）或對應 user 不存在則跳過`（用 `DB::table` 取原始值避開 global scope）。⚠️ `bill:gen` 手動帶 `contract-id` 跑會在 `CreateRentBill.php:108` 因 `$now` null 報「Illegal operator」（既有問題，非守衛）；驗證改用 tinker 直呼 `genBill(..., isDebug=true)`。"
+  ],
+  [
+   "JGB｜環境與部署",
+   "MARK",
+   "**AUTO_C 操作噪音收斂**：正規化器保留出錯 PHP token，故 psysh/tinker REPL 打字錯每次都是新 sig、被當 `[NEW]` 重複調查。`AUTO_C` regex list 把同類自動歸 C。**安全邊界**：規則要求訊息不含檔案路徑 `(?!.*PATH)`，故真實檔案 parse error（壞部署，訊息帶 ` in PATH on line N`）仍浮 `[NEW]`；同類 cnt≥20 仍以 `[SPIKE auto-C]` 重浮；每筆壓抑寫 `errfix.log`。"
+  ],
+  [
+   "JGB｜環境與部署",
+   "MARK",
+   "**pull 前檢查**：`git status --porcelain` 正常只會看到一堆 `??` 未追蹤檔，沒有 ` M` 才可以 pull。"
+  ],
+  [
+   "JGB｜環境與部署",
+   "MARK",
+   "觸發重建的事故是一顆 master→preview 的 merge 解衝突取單邊，把某個 class 的常數 + 方法簽章共 19 行刪掉（**兩個 parent 都有那段，merge 結果是 0** ＝ evil merge）。殘留的 method body 被前一個未閉合的 `/**` 吞進註解 → **`php -l` 過、大部分測試也過**，只有執行到那支方法才 fatal。"
+  ],
+  [
+   "JGB｜自動接單 watcher",
+   "MARK",
+   "- PM 再回什麼，watcher 只會印 `stage=failed 收到 X 的核准語氣回覆 → 告警人工接手，不自動動作`，**不會重試**。"
+  ],
+  [
+   "JGB｜自動接單 watcher",
+   "MARK",
+   "- `dev_on_cloud.py`：`ship()`、`data_only_no_preview()`、`synth_meta(**extra)`"
+  ],
+  [
+   "JGB｜自動接單 watcher",
+   "MARK",
+   "| 這在範圍內 | ● 掉進一般核准判讀器 → `approve(0.90「表示在範圍內，同意」)`。等驗收那格的 approve ＝**排進待上版**。PM 的意思是「你判錯了，這本來就在範圍內，去修」 |"
+  ],
+  [
+   "JGB｜自動接單 watcher",
+   "MARK",
+   "加上邊界之後每個位置只有一種切法，回溯空間變線性。實測那串電錶清單：幾百秒 → 0.0001 秒，而且正確地回空；`合約84512、84971`／`帳單 696207` 全部照常抓得到。守門：`test_prod_probe_offline.py::LongDigitRunTest`。"
+  ],
+  [
+   "JGB｜電錶IoT與門鎖",
+   "MARK",
+   "2. **build 跑到一半 session 被關掉＝整個 build 死掉**，而且 `public/dist/manifest.json` 會停在「被刪掉」的狀態（vite 先清 dist 才寫）。看到 `git status` 顯示 ` D public/dist/manifest.json` 就是這個。✅ 正解＝`setsid nohup bash -c \"... ; touch <done-marker>\" </dev/null &` 脫離 session 跑，再用 `until [ -f <done-marker> ]; do sleep 10; done` 等它"
+  ],
+  [
+   "STILLA｜指令｜Stilla 套印與報價",
+   "MARK",
+   "- **主旨**：`請協助出單，謝謝  {銀行分行}商火要保書-{要保人}({取單mm/dd}取單)`"
+  ],
+  [
+   "STILLA｜指令｜Stilla 套印與報價",
+   "MARK",
+   "- **主旨**：`請協助報價，謝謝~ {銀行&分行}商火-{被保人姓名}`（例：`請協助報價，謝謝~ 聯邦商火-許賢哲`）"
+  ],
+  [
+   "STILLA｜指令｜Stilla 套印與報價",
+   "MARK",
+   "- **內文**：`Dear,／  商火要保書如附／請客戶在第1、3頁打勾處簽名,／確定起保日請儘早拍給我出單，謝謝~`"
+  ],
+  [
+   "STILLA｜指令｜Stilla 套印與報價",
+   "MARK",
+   "- **內文**：`Dear大大，／請協助出單，謝謝!／{起保mm/dd}起保  {取單mm/dd}取單／(請代印要保文件)`"
+  ],
+  [
+   "STILLA｜指令｜Stilla 套印與報價",
+   "MARK",
+   "2. 第1頁上方寫紅字備註 `請協助“{取單mm/dd} 下班前取單”，謝謝`（例 `請協助“7/9 下班前取單”，謝謝`；**引號內只有日期會變**，其餘字含全形引號與逗號一字不改。她只丟一個日期（`7/9`）就是「照樣板、只換日期」；寫了完整句子且與樣板不同才以她的原文為準）"
+  ],
+  [
+   "STILLA｜範本｜套-南山住火要保書",
+   "MARK",
+   "`formulas.py` 的 `compute()` 做這件事，並在 stderr 印一行 `[note] 借款人自動代入要保人：…`。"
+  ],
+  [
+   "STILLA｜範本｜改-南山商火要保書",
+   "MARK",
+   "- `formulas.py`：**聯邦通路不壓 Stilla 本人簽名**——`p1_note`/`bank` 含「聯邦」且 `solicitor_signature` 指到 `stilla.png` 時，`compute()` 把該 key 拿掉，引擎 `if not src: continue` 自動略過 p1/p4 兩個招攬人員簽名框（stderr 印 `[info] 聯邦通路：略過 Stilla 本人簽名`）。**只擋 stilla.png**，明確給別人的簽名圖照壓。"
+  ]
+ ]
+}

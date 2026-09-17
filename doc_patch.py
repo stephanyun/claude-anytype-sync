@@ -96,6 +96,8 @@ def fetch(sid, oid):
 
 
 def main():
+    if len(sys.argv) < 4:
+        sys.exit(__doc__)
     mode = sys.argv[1]
     keyword, path = sys.argv[2], sys.argv[3]
     sid, oid, title = resolve(keyword)
@@ -131,4 +133,6 @@ def main():
         sys.exit('✗ 有標題被 --- 吃掉，修正後重跑')
 
 
-main()
+# 掛 __main__ 守衛，drift_check.py 才 import 得到 denorm／fetch 而不會跟著跑起來
+if __name__ == '__main__':
+    main()
