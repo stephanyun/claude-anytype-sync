@@ -61,7 +61,11 @@ def denorm(md):
             line = re.sub(r'\s{2,}', ' ', line)
         out.append(line.rstrip())
     md = '\n'.join(out)
-    md = md.replace('\\\\|', '|').replace('\\|', '|')
+    # `|` 的跳脫分兩種命運：表格列裡 `\|` 是**必要**的（拆掉那一格之後的內容會被
+    # 吃掉），只把疊加的多層收回一層；表格外（inline code 裡）才還原成裸 `|`。
+    md = '\n'.join(
+        re.sub(r'\\+\|', r'\\|', l) if l.lstrip().startswith('|') else re.sub(r'\\+\|', '|', l)
+        for l in md.split('\n'))
     return re.sub(r'\\([_*])', r'\1', md)
 
 
