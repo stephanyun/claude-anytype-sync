@@ -41,7 +41,7 @@ def unescape(md):
     # Anytype 存的是**雙**反斜線（`include\\_signature`），原本只吃一層、
     # 會留下 `include\_signature`，於是所有含底線的字（欄位名、函式名、檔名）
     # 用 grep 一律搜不到。2026-09-14 改成 `\\+` 一次吃光所有層。
-    return re.sub(r'\\+([_*`\[\]#])', r'\1', md or '')
+    return re.sub(r'\\+([_*`\[\]#|])', r'\1', md or '')
 
 
 def body(sid, oid):
