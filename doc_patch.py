@@ -58,6 +58,9 @@ def denorm(md):
     for line in md.split('\n'):
         if line.startswith('|') and not re.match(r'^\|[:\-|\s]+\|?$', line):
             line = re.sub(r'(?:\s*<br>)+\s*\|', ' |', line)
+            # 表格緊接在清單／段落後面時，GET 會在表頭第一格前塞 `<br>`；
+            # 原樣寫回，Anytype 會把整張表攤平成一行文字多出來，每 round-trip 多一行。
+            line = re.sub(r'\|\s*(?:<br>\s*)+', '| ', line)
             line = re.sub(r'\s{2,}', ' ', line)
         out.append(line.rstrip())
     md = '\n'.join(out)
@@ -70,9 +73,12 @@ def denorm(md):
 
 
 def ensure_rule_breaks(md):
-    """`---` 前面若不是空行就補一行，否則它會把前一行吃成 setext H2。"""
+    """`---` 前面若不是空行就補一行，否則它會把前一行吃成 setext H2。
+    表格開頭同理：前一行非空且不是表格列就補空行（見 denorm 的 `<br>` 表頭說明）。"""
     out = []
     for line in md.split('\n'):
+        if line.startswith('|') and out and out[-1].strip() and not out[-1].lstrip().startswith('|'):
+            out.append('')
         if re.match(r'^\s*-{3,}\s*$', line):
             if out and out[-1].strip():
                 out.append('')
