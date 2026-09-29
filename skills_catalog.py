@@ -25,6 +25,7 @@ INDEX_PATH = os.path.expanduser("~/.claude/anytype/skills_index.json")
 # 第三方（gstack、官方 plugin 快取）不進目錄：內容在上游，鏡像七份只是噪音（abu 決定 2026-09-29）。
 SEARCH_ROOTS = [os.path.expanduser("~/.claude/skills")]
 THIRD_PARTY_MARKERS = ("/gstack/", "/.gstack/", "/plugins/")
+OWN_MARKERS = ("/skills-personal/", "/jgb-skills/", "/claude-skills")
 FENCE = "`````"
 
 
@@ -88,6 +89,10 @@ def skill_files():
         for p in glob.glob(os.path.join(root, "**", "SKILL.md"), recursive=True):
             real = os.path.realpath(p)
             if any(m in real for m in THIRD_PARTY_MARKERS) or any(m in p for m in THIRD_PARTY_MARKERS):
+                continue
+            # 自己的 skill 一律是 install.sh 從三個 repo 接進來的 symlink；
+            # 直接躺在 ~/.claude/skills 底下的實體目錄都是第三方（gstack 子指令等）。
+            if real == os.path.abspath(p) and not any(m in real for m in OWN_MARKERS):
                 continue
             # Name as <plugin>__<skill>: plugin = dir right above the "skills/" dir.
             parts = p.split(os.sep)
