@@ -21,8 +21,10 @@ import json, os, sys, glob, urllib.request, urllib.error
 
 CFG_PATH = os.path.expanduser("~/.claude/anytype/config.json")
 INDEX_PATH = os.path.expanduser("~/.claude/anytype/skills_index.json")
-SEARCH_ROOTS = [os.path.expanduser("~/.claude/skills"),
-                os.path.expanduser("~/.claude/plugins")]
+# 只鏡像自己的 skill（私人／外包／公司三個 repo 接進 ~/.claude/skills 的 symlink）。
+# 第三方（gstack、官方 plugin 快取）不進目錄：內容在上游，鏡像七份只是噪音（abu 決定 2026-09-29）。
+SEARCH_ROOTS = [os.path.expanduser("~/.claude/skills")]
+THIRD_PARTY_MARKERS = ("/gstack/", "/.gstack/", "/plugins/")
 FENCE = "`````"
 
 
@@ -84,6 +86,9 @@ def skill_files():
     out = {}
     for root in SEARCH_ROOTS:
         for p in glob.glob(os.path.join(root, "**", "SKILL.md"), recursive=True):
+            real = os.path.realpath(p)
+            if any(m in real for m in THIRD_PARTY_MARKERS) or any(m in p for m in THIRD_PARTY_MARKERS):
+                continue
             # Name as <plugin>__<skill>: plugin = dir right above the "skills/" dir.
             parts = p.split(os.sep)
             skill_dir = parts[-2] if len(parts) >= 2 else "skill"
