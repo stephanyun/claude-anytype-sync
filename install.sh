@@ -8,7 +8,7 @@ set -euo pipefail
 
 CHECKOUT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="$HOME/.claude/anytype"
-SCRIPTS=(sync.py hook.py skills_catalog.py)
+SCRIPTS=(sync.py hook.py skills_catalog.py doc.py doc_patch.py drift_check.py drift_check_cron.sh memory_git_sync.sh fleet_audit.py fleet_probe.py session_probe.sh)
 
 mkdir -p "$DEST"
 for f in "${SCRIPTS[@]}"; do

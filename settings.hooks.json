@@ -4,8 +4,16 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "python3 ~/.claude/anytype/sync.py reconcile >/dev/null 2>&1 || true" },
-          { "type": "command", "command": "python3 ~/.claude/anytype/skills_catalog.py sync >/dev/null 2>&1 || true" }
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/anytype/sync.py reconcile >/dev/null 2>&1 || echo \"⚠️ Anytype memory sync 失敗（App 沒開或金鑰失效）——本 session 寫的 memory 只會留在本機、不會同步。修：開啟 Anytype 後跑 python3 ~/.claude/anytype/sync.py reconcile\"",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/anytype/skills_catalog.py sync >/dev/null 2>&1 || echo \"⚠️ Anytype skills catalog sync 失敗（App 沒開或金鑰失效）——skill 目錄未同步。\"",
+            "timeout": 15
+          }
         ]
       }
     ],
@@ -13,7 +21,10 @@
       {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "python3 ~/.claude/anytype/hook.py" }
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/anytype/hook.py"
+          }
         ]
       }
     ]
