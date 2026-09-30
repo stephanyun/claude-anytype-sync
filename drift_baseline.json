@@ -36,19 +36,9 @@
    "3. 無主入帳（`❌ 銀行有、系統無`，role_id 空）填「確認出款」要擋：`read_correction_xlsx()` 與 `build_payout()` 兩層都擋，叫他改填 `保留下期`／`確認不出款`。"
   ],
   [
-   "JGB｜環境與部署",
-   "MARK",
-   "- 偵測 evil merge（解衝突取單邊刪掉程式）：對 merge M 與 parents P1、P2 取非空行 multiset，lost = (lines(P1) ∩ lines(P2)) − lines(M)。先用 diff --name-only BASE P1 ∩ diff --name-only BASE P2 縮小檔案。殘留 method body 被未閉合 `/**` 吞進註解時 php -l 會過、多數測試也過。"
-  ],
-  [
    "JGB｜自動接單 watcher",
    "MARK",
    "- `dev_on_cloud.py`：`ship()`、`data_only_no_preview()`、`synth_meta(**extra)`"
-  ],
-  [
-   "JGB｜自動接單 watcher",
-   "MARK",
-   "- `failed` 在 `TERMINAL_STAGES`，PM 再回什麼只會印 `stage=failed 收到 X 的核准語氣回覆 → 告警人工接手，不自動動作`，不重試；板上停「G2 處理中」看起來還在動。唯一出口是人工 `--ctl`。"
   ],
   [
    "JGB｜電錶IoT與門鎖",
@@ -79,6 +69,11 @@
    "STILLA｜指令｜Stilla 套印與報價",
    "MARK",
    "2. 第1頁上方寫紅字備註 `請協助“{取單mm/dd} 下班前取單”，謝謝`（例 `請協助“7/9 下班前取單”，謝謝`；引號內只有日期會變，其餘字含全形引號與逗號一字不改。她只丟一個日期（`7/9`）就是「照樣板、只換日期」；寫了完整句子且與樣板不同才以她的原文為準）"
+  ],
+  [
+   "STILLA｜範本｜套-南山住火要保書",
+   "MARK",
+   "- `formulas.py` 的 `_check_required()` 在 `compute()` 最後檢查，缺值印 `[warn] 住火必填缺：…`。"
   ],
   [
    "STILLA｜範本｜套-南山住火要保書",
