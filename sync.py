@@ -74,7 +74,7 @@ def req(method, path, body=None):
     r.add_header("Authorization", "Bearer " + c["api_key"])
     r.add_header("Anytype-Version", c["api_version"])
     r.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(r, timeout=25) as resp:
+    with urllib.request.urlopen(r, timeout=8) as resp:
         return json.loads(resp.read().decode())
 
 

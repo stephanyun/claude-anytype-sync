@@ -5,7 +5,16 @@ Reads the hook JSON on stdin, and if the edited file lives in *any* configured
 memory dir (a *.md), pushes it to Anytype. Never blocks Claude: failures are
 reported on stderr and exit 1 (PostToolUse only blocks on exit 2).
 """
-import glob, json, os, sys, subprocess
+import sys
+
+# 快路徑（2026-10-01）：這支掛在每一次 Write／Edit 之後，但只有 memory 目錄的 .md 才有事做。
+# 先看 stdin 原文有沒有 ".md"，沒有就在 import json／subprocess／glob 之前直接退出
+# （實測整支 22ms，其中 python 啟動＋import 就佔了大半）。有 ".md" 才走完整判斷。
+_RAW = sys.stdin.read()
+if ".md" not in _RAW:
+    sys.exit(0)
+
+import glob, json, os, subprocess
 
 CFG_PATH = os.path.expanduser("~/.claude/anytype/config.json")
 SYNC = os.path.expanduser("~/.claude/anytype/sync.py")
@@ -40,7 +49,7 @@ def memory_dirs():
 
 def main():
     try:
-        data = json.load(sys.stdin)
+        data = json.loads(_RAW)
     except Exception:
         return
     tool = data.get("tool_name", "")

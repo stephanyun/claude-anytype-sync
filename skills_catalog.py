@@ -42,7 +42,7 @@ def req(method, path, body=None):
     r.add_header("Anytype-Version", c["api_version"])
     r.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(r, timeout=20) as resp:
+        with urllib.request.urlopen(r, timeout=8) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         sys.stderr.write(f"HTTP {e.code} {method} {path}: {e.read().decode()[:200]}\n")
