@@ -56,7 +56,10 @@ def denorm(md):
     """剝掉 Anytype GET 加上的一層渲染修飾。冪等。"""
     out = []
     for line in md.split('\n'):
-        if line.startswith('|') and not re.match(r'^\|[:\-|\s]+\|?$', line):
+        # lstrip：巢在清單底下的表格 GET 回來是縮排的（`    | <br>層 |`），
+        # 只認行首 `|` 會漏掉它，第一輪留著 `<br>`、第二輪（md_clean 把縮排剝掉後）
+        # 才剝，dump 的冪等自檢就會炸（FLEET 那頁 2026-10-01 實際撞到）。
+        if line.lstrip().startswith('|') and not re.match(r'^\s*\|[:\-|\s]+\|?$', line):
             line = re.sub(r'(?:\s*<br>)+\s*\|', ' |', line)
             # 表格緊接在清單／段落後面時，GET 會在表頭第一格前塞 `<br>`；
             # 原樣寫回，Anytype 會把整張表攤平成一行文字多出來，每 round-trip 多一行。
