@@ -22,7 +22,9 @@ OUT = os.path.expanduser(sys.argv[1] if len(sys.argv) > 1 else '~/.claude/memory
 
 # 遮蔽規則：(名稱, 正則, 替換)。值只認 ASCII 串（≥8 字、不是 $變數／<佔位>／[REDACTED]），
 # 碰到空白、反引號、引號、括號、中文標點就停，避免把整行吃掉或誤傷中文正文。
-VAL = r'(?![\$<\[])[A-Za-z0-9_\-\.\{\}:/\?=%@!#+~]{8,}'
+# 2026-10-08：排除路徑（/ ~ 開頭）、全大寫底線的變數名（NOCAPTCHA_BYPASS_TOKEN、SLACK_PM_HANDLES）——這些是指引不是值，
+# 第一次掃描 5 頁全是這類誤判。
+VAL = r'(?![\$<\[/~])(?!(?-i:[A-Z0-9]*_[A-Z0-9_]*)(?<=[A-Z0-9_]{8})(?![A-Za-z0-9_\-\.\{\}:/\?=%@!#+~]))[A-Za-z0-9_\-\.\{\}:/\?=%@!#+~]{8,}'
 REDACT = [
     ('aws-key',   re.compile(r'AKIA[0-9A-Z]{16}'), '[REDACTED]'),
     ('openai',    re.compile(r'\bsk-[A-Za-z0-9_\-]{16,}'), '[REDACTED]'),
