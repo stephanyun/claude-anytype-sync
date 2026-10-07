@@ -91,11 +91,12 @@ def main():
                 print('%s%s  (%d 字)' % ('    ' if lvl == 3 else '', head, len('\n'.join(md.split('\n')[a:b]))))
             return
         if not secs:
-            nbytes = len(md.encode('utf-8'))
-            if nbytes > 30000:  # 中文頁約 1.5 byte＝1 token；Read 工具單次上限 25000 token
-                print('# ⚠ 這頁 %dKB（約 %d token）。只讀需要的段：doc.py toc "%s"，'
-                      '再 doc.py read "%s" <段落關鍵字>' % (nbytes // 1024, nbytes * 2 // 3, title, title),
-                      file=sys.stderr)
+            # 2026-10-08 對話挖礦：整頁讀是 token 浪費大戶（單頁 30 天最多 13.7 萬 token），
+            # 整頁 >5000 字時在 stdout 最前面印一行提醒（stderr 常被 2>/dev/null 吃掉）。
+            nchar = len(md)
+            if nchar > 5000:
+                print('# ⚠ 整頁 %d 字（約 %d token）；建議先 doc.py toc "%s" 再 doc.py read "%s" <段落關鍵字>'
+                      % (nchar, len(md.encode('utf-8')) * 2 // 3, title, title))
             print(md)
             return
         lines = md.split('\n')
