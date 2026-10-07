@@ -8,6 +8,7 @@ to Anytype across machines. Before this repo they were copied by hand and drifte
 |---|---|
 | `sync.py` | two-way memory ⇄ Anytype "Claude Memory" (push/pull/reconcile/guard) |
 | `hook.py` | PostToolUse: auto-push a memory `.md` right after it's written |
+| `hook.sh` | bash 外殼：先看 file_path 是不是 memory 的 .md，不是就不起 python3（settings.json 掛的是這支） |
 | `skills_catalog.py` | one-way mirror of local `SKILL.md` → Anytype "Claude Skills" (namespaced) |
 
 These three **must be byte-identical on every node.** This repo is the source of truth.

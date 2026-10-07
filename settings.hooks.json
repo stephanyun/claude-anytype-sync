@@ -23,7 +23,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/anytype/hook.py"
+            "command": "bash ~/.claude/anytype/hook.sh"
           }
         ]
       }
