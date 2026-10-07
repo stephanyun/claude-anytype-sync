@@ -1,6 +1,11 @@
 {
  "accepted": [
   [
+   "ABU｜布想",
+   "MARK",
+   "- 用法：`bx-notify.py \"第一行是標題（前 12 字）\\n內文\"`，`--dry-run` 只連線列主機；`--host` 預設 xz-pve-aide（claude 在那台回「收到」，會留一個 tmux 視窗給 reaper 收）。"
+  ],
+  [
    "CORE｜memory 與 skills 同步機制",
    "MARK",
    "- 收尾 `**` 後面要留空白再接中文。"
