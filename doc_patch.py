@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""通用版的 Anytype 文件寫回（上下文庫任一頁）。
+"""改 Anytype 上下文庫任一頁（唯一合法寫法；--dump → 改檔 → --patch）：
 
-  doc_patch.py --dump  <頁名關鍵字> <out.md>   # 抓下來並去渲染成可編輯 markdown
-  doc_patch.py --patch <頁名關鍵字> <in.md>    # 送回去並自動回讀驗證
+  doc_patch.py --dump  "<頁名關鍵字>" /tmp/x.md    # 抓下來成可編輯 markdown
+  doc_patch.py --patch "<頁名關鍵字>" /tmp/x.md    # 送回去＋自動回讀驗證 H2 集合
 
-跟 spec-denorm.py 同一套 denorm／ensure_rule_breaks（那三個雷的說明見該檔），
-差別只有兩點：任一頁都能用（依頁名關鍵字解析 object id），
-以及回讀驗證改成「比對送出的 H2 集合」而不是寫死 `## 一、` 格式。
+兩個參數都要給（頁名加引號；第二個是檔案路徑，不是 stdout）。
+dump 檔超過 30KB 別用 Read 整檔（25000 token 上限）：Read 時 limit ≤150 行，或
+`grep -n '^## ' x.md` 找段落、`sed -n 'A,Bp' x.md` 只讀那段；改檔用 Edit／python 定位錨點插入。
+--patch 回 HTTP 500 時立刻用同一份檔重送一次（大頁可能已被清空），dump 原稿不要先刪。
+denorm／ensure_rule_breaks 與 spec-denorm.py 同一套（三個雷的說明見該檔）。
 """
 import json, os, re, sys, urllib.request
 # realpath 不是 abspath：部署目錄 ~/.claude/anytype/ 的這支是 symlink，
@@ -116,7 +118,10 @@ def main():
         if md_clean(denorm(base)) != base:
             sys.exit('✗ 清理不是冪等的')
         open(path, 'w', encoding='utf-8').write(base)
-        print('✓ %s → %s（%d bytes）' % (title, path, len(base)))
+        nb = len(base.encode('utf-8'))
+        print('✓ %s → %s（%dKB、%d 行）' % (title, path, nb // 1024, base.count('\n') + 1))
+        if nb > 30000:
+            print("   ⚠ 超過 Read 單次上限：Read 時 limit ≤150 行，或 grep -n '^## ' 找段再 sed -n 'A,Bp'")
         return
 
     if mode != '--patch':
