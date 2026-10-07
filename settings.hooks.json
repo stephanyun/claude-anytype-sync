@@ -1,17 +1,17 @@
 {
-  "_comment": "MERGE this 'hooks' block into ~/.claude/settings.json (do not overwrite the whole file).",
+  "_comment": "MERGE this 'hooks' block into ~/.claude/settings.json (do not overwrite the whole file). SessionStart 兩支前面的 [ JGB_AUTOINTAKE = 1 ] || 是 2026-10-07 加的 headless 守門：cc-abu-c 的 monday watcher 在自己 os.environ 掛了 JGB_AUTOINTAKE=1，它開的每個 claude -p（30 天 2069 個）都會繼承；那些 session 不需要 memory reconcile／skills catalog sync（實測各 430ms／232ms），直接跳過。互動 session 沒這個變數，照常跑。",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/anytype/sync.py reconcile >/dev/null 2>&1 || echo \"⚠️ Anytype memory sync 失敗（App 沒開或金鑰失效）——本 session 寫的 memory 只會留在本機、不會同步。修：開啟 Anytype 後跑 python3 ~/.claude/anytype/sync.py reconcile\"",
+            "command": "[ \"${JGB_AUTOINTAKE:-}\" = 1 ] || python3 ~/.claude/anytype/sync.py reconcile >/dev/null 2>&1 || echo \"⚠️ Anytype memory sync 失敗（App 沒開或金鑰失效）——本 session 寫的 memory 只會留在本機、不會同步。修：開啟 Anytype 後跑 python3 ~/.claude/anytype/sync.py reconcile\"",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "python3 ~/.claude/anytype/skills_catalog.py sync >/dev/null 2>&1 || echo \"⚠️ Anytype skills catalog sync 失敗（App 沒開或金鑰失效）——skill 目錄未同步。\"",
+            "command": "[ \"${JGB_AUTOINTAKE:-}\" = 1 ] || python3 ~/.claude/anytype/skills_catalog.py sync >/dev/null 2>&1 || echo \"⚠️ Anytype skills catalog sync 失敗（App 沒開或金鑰失效）——skill 目錄未同步。\"",
             "timeout": 15
           }
         ]
