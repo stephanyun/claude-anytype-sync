@@ -843,7 +843,13 @@ def search(query, limit=10, show_body=False):
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "list"
     force = "--force" in sys.argv
-    if cmd == "reconcile": reconcile(force=force)
+    if cmd == "reconcile":
+        # SessionStart hook 每個新 session 都跑這支；只跑 bot 案件的機器（xz-stilla、m2-mini）
+        # 在 settings.json 的 env 設 ANYTYPE_SKIP_SESSION_SYNC=1 就直接跳過（2026-10-13 abu 定案），
+        # 每個 session 少等幾秒。要手動對齊就 env -u ANYTYPE_SKIP_SESSION_SYNC 再跑。
+        if os.environ.get("ANYTYPE_SKIP_SESSION_SYNC") == "1":
+            print("reconcile 跳過（ANYTYPE_SKIP_SESSION_SYNC=1）", file=sys.stderr); sys.exit(0)
+        reconcile(force=force)
     elif cmd == "search":
         lim, terms, rest = 10, [], list(sys.argv[2:])
         while rest:

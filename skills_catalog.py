@@ -201,6 +201,9 @@ def list_objects():
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "sync"
-    if cmd == "sync":   sync()
+    if cmd == "sync":
+        if os.environ.get("ANYTYPE_SKIP_SESSION_SYNC") == "1":   # 同 sync.py reconcile 的跳過旗標
+            print("skills catalog sync 跳過（ANYTYPE_SKIP_SESSION_SYNC=1）", file=sys.stderr); sys.exit(0)
+        sync()
     elif cmd == "list": list_objects()
     else:               print(__doc__)
