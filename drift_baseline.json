@@ -1,11 +1,6 @@
 {
  "accepted": [
   [
-   "ABU｜布想",
-   "MARK",
-   "- 用法：`bx-notify.py \"第一行是標題（前 12 字）\\n內文\"`，`--dry-run` 只連線列主機；`--host` 預設 xz-pve-aide（claude 在那台回「收到」，會留一個 tmux 視窗給 reaper 收）。"
-  ],
-  [
    "CORE｜memory 與 skills 同步機制",
    "MARK",
    "- 收尾 `**` 後面要留空白再接中文。"
@@ -89,6 +84,16 @@
    "STILLA｜範本｜改-南山商火要保書",
    "MARK",
    "- 聯邦通路不壓 Stilla 本人簽名：`p1_note`/`bank` 含「聯邦」且 `solicitor_signature` 指到 `stilla.png` 時，`compute()` 把該 key 拿掉，引擎 `if not src: continue` 自動略過 p1/p4 兩個招攬人員簽名框（stderr 印 `[info] 聯邦通路：略過 Stilla 本人簽名`）。只擋 stilla.png，明確給別人的簽名圖照壓（那格由聯邦端招攬人員親簽）。"
+  ],
+  [
+   "STILLA｜規則｜通用資料解析（Stilla）",
+   "MARK",
+   "- 引擎自動補（2026-10-13 起 `apply_apply_dates()`）：住火逐行版／舊版／簽回表格版的 `apply_date_year/month/day`、批改申請書的 `apply_year/month/day`，三欄全沒給才補，stderr 印 `[note] 要保／申請日期未給，帶當天`。"
+  ],
+  [
+   "STILLA｜規則｜通用資料解析（Stilla）",
+   "MARK",
+   "你要做的是看 stderr：`[note] 保費/保額自動補算` ＝有補到；`[warn] 保費未補算：缺 …` ＝資料不齊，補齊重跑或請 Stilla 給，**不可留白送出**。自己算或核對："
   ]
  ]
 }
