@@ -93,6 +93,64 @@ def ensure_rule_breaks(md):
     return '\n'.join(out)
 
 
+def utf16_compensate(md):
+    """PATCH 前把 astral 字元（U+10000 以上，如 🔊，UTF-16 佔 2 單位）之後的行內標記
+    （`code`、**粗體**）預先左移「該點之前的 astral 字元數」。
+    2026-10-15 實測（API 2025-11-08）：Anytype 解析 markdown 時行內標記的位移是用
+    UTF-16 code unit 算、套用時卻當 code point，所以同一行每個標記都右移「其前 astral 數」
+    格（`cd` → c`d `、三個 emoji 後的 `op` → op `qq`），每次 dump→patch 再挪一次。
+    md_clean 的 ASTRAL 對照表只救得了表上有的字，這裡是通用解。
+    左移後若會跨過另一個 astral 字、反引號、星號或 `|`（表格格線）就放棄不動，維持舊行為。
+    code fence 內不動。"""
+    def astral_before(text, i):
+        return sum(1 for c in text[:i] if ord(c) > 0xFFFF)
+    def fix_line(line):
+        if not any(ord(c) > 0xFFFF for c in line):
+            return line
+        # 拆成純文字 + 標記：(from, to, open, close)，座標是純文字的 code point 索引
+        pat = re.compile(r'(`+)(.+?)\1|\*\*(.+?)\*\*')
+        text, marks, pos = [], [], 0
+        cur = 0
+        for m in pat.finditer(line):
+            text.append(line[pos:m.start()]); cur += m.start() - pos
+            if m.group(1):
+                inner, op = m.group(2), m.group(1)
+            else:
+                inner, op = m.group(3), '**'
+            marks.append([cur, cur + len(inner), op, op])
+            text.append(inner); cur += len(inner)
+            pos = m.end()
+        text.append(line[pos:])
+        text = ''.join(text)
+        if not marks:
+            return line
+        ins = []  # (純文字位置, 標記字串)；同一位置先關後開
+        for f, t, op, cl in marks:
+            nf, nt = f - astral_before(text, f), t - astral_before(text, t)
+            ok = (nf + astral_before(text, nf) == f and nt + astral_before(text, nt) == t
+                  and not re.search(r'[`*|]', text[nf:f] + text[nt:t]))
+            # 粗體左移後若開頭接空白／結尾前是空白，CommonMark 不認它是強調（實測變成
+            # 字面 \*\*），這種放棄不動；code span 沒這限制。
+            if ok and op == '**' and (text[nf:nf + 1].isspace() or text[nt - 1:nt].isspace()):
+                ok = False
+            if not ok:
+                nf, nt = f, t
+            ins.append((nf, 1, op)); ins.append((nt, 0, cl))
+        ins.sort(key=lambda x: (x[0], x[1]))
+        out, pos = [], 0
+        for at, _, s in ins:
+            out.append(text[pos:at]); out.append(s); pos = at
+        out.append(text[pos:])
+        return ''.join(out)
+    out, fence = [], False
+    for line in md.split('\n'):
+        if line.strip().startswith('```'):
+            fence = not fence
+            out.append(line); continue
+        out.append(line if fence else fix_line(line))
+    return '\n'.join(out)
+
+
 def fetch(sid, oid):
     o = api('/spaces/%s/objects/%s?format=md' % (sid, oid))
     o = o.get('object', o)
@@ -128,7 +186,8 @@ def main():
         sys.exit(__doc__)
 
     new = ensure_rule_breaks(open(path, encoding='utf-8').read())
-    api('/spaces/%s/objects/%s' % (sid, oid), {'markdown': new}, method='PATCH')
+    # 送出的是補償過的版本，回讀比對仍用 new（補償只動標記位置，純文字不變）
+    api('/spaces/%s/objects/%s' % (sid, oid), {'markdown': utf16_compensate(new)}, method='PATCH')
     back = fetch(sid, oid)
     back_lines = set(l.strip() for l in back.split('\n'))
     lost = [l for l in new.split('\n') if l.strip() and l.strip() not in back_lines
