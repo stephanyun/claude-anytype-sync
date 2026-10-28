@@ -112,6 +112,9 @@ def scan_page(title, md):
 
 
 def main():
+    # 上面 `from doc_patch import` 會把 repo 目錄再插到 sys.path[0]，這裡要把部署目錄
+    # 放回最前面，`import doc` 才會拿到旁邊有 config.json 的那份（2026-10-29 實際撞到）。
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import doc
     argv = sys.argv[1:]
     only = None
