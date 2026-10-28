@@ -243,4 +243,10 @@ ok(c != 0 and '不能配' in o, 'drift_check：--accept 不能配 --page')
 sys.argv = ['doc_patch.py', '--patch', '--bogus', 'x', 'y']
 o, c = run(dp.main)
 ok(c != 0 and '不認得的旗標' in o, 'CLI：不認得的旗標拒絕')
+sys.argv = ['doc_patch.py', '--help']
+o, c = run(dp.main)
+ok(c == 0 and '--dump  "<頁名關鍵字>" /tmp/x.md' in o and '不認得' not in o, 'CLI：--help 印用法、exit 0、不當錯誤')
+sys.argv = ['doc_patch.py', '-h']
+o, c = run(dp.main)
+ok(c == 0 and '--patch' in o, 'CLI：-h 同 --help')
 print('全部 %d 項通過' % n)

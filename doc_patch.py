@@ -452,6 +452,10 @@ def do_patch(sid, oid, title, path, strict=False, force=False, no_verify=False, 
 
 
 def main():
+    # 2026-10-29 挖礦：7 天內 30 個互動 session 第一步都先跑 `doc_patch.py --help`（舊版回「✗ 不認得的旗標：--help」再印用法）。
+    # --help／-h 就是要看用法，印 docstring、exit 0，不當錯誤。
+    if any(a in ('-h', '--help') for a in sys.argv[1:]):
+        print(__doc__.strip()); return
     args = [a for a in sys.argv[1:] if not a.startswith('--') or a in ('--dump', '--patch', '--lint')]
     flags = set(a for a in sys.argv[1:] if a.startswith('--')) - {'--dump', '--patch', '--lint'}
     unknown = flags - {'--no-verify', '--strict', '--force'}
