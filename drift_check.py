@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """掃「上下文庫」全庫，找 Anytype round-trip 累積出來的 markdown 損壞。
 
-  drift_check.py            # 掃一遍，只印「不在基準線裡的新問題」；有新問題 exit 1
-  drift_check.py --all      # 連已接受的誤判一起印出來
-  drift_check.py --accept   # 把目前所有命中收進基準線（確認過都是誤判才跑）
+  drift_check.py                   # 掃一遍，只印「不在基準線裡的新問題」；有新問題 exit 1
+  drift_check.py --all             # 連已接受的誤判一起印出來
+  drift_check.py --accept          # 把目前所有命中收進基準線（確認過都是誤判才跑）
+  drift_check.py --page <頁名關鍵字> # 只掃標題含關鍵字的頁（doc_patch --patch 收尾自動做的就是這個）
 
 為什麼需要它：Anytype 的 PATCH 會把行內標記的位置重算，只要寫回的 markdown
 有一點不合它的胃口，`**` 與反引號就會整組往右挪一格，而且**每寫一次挪一次**。
@@ -30,7 +31,8 @@ import json, os, re, sys
 # 部署目錄的 symlink 執行：~/.claude/anytype/drift_check.py
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import doc
+# `import doc` 放進 main()：doc.py 一 import 就讀 abspath 旁的 config.json，從 repo 目錄
+# import 本檔（doc_patch --patch 收尾借用 scan_page／load_baseline）時那裡沒有 config.json。
 # 用 doc_patch 自己的 unescape：doc.py 那支為了好讀會把 `\|` 也還原成裸 `|`，
 # 拿來檢查會讓表格 cell 裡的跳脫直線被誤判成欄位分隔。
 from doc_patch import denorm, unescape
@@ -38,6 +40,13 @@ from md_clean import clean as md_clean
 
 BASELINE = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'drift_baseline.json')
 C_IN_CODE = re.compile(r'`\*\*[^`]*\*\*`')
+
+
+def load_baseline():
+    """基準線裡已接受的 (頁名, 類型, 整行) 集合；檔不存在回空集合。"""
+    if not os.path.exists(BASELINE):
+        return set()
+    return {tuple(x) for x in json.load(open(BASELINE, encoding='utf-8'))['accepted']}
 
 
 def mark_flags(line):
@@ -103,16 +112,29 @@ def scan_page(title, md):
 
 
 def main():
-    mode = sys.argv[1] if len(sys.argv) > 1 else ''
-    if mode not in ('', '--all', '--accept'):
+    import doc
+    argv = sys.argv[1:]
+    only = None
+    if '--page' in argv:
+        i = argv.index('--page')
+        if i + 1 >= len(argv):
+            sys.exit(__doc__)
+        only = argv[i + 1]
+        del argv[i:i + 2]
+    mode = argv[0] if argv else ''
+    if mode not in ('', '--all', '--accept') or len(argv) > 1:
         sys.exit(__doc__)
-    base = set()
-    if os.path.exists(BASELINE) and mode != '--accept':
-        base = {tuple(x) for x in json.load(open(BASELINE, encoding='utf-8'))['accepted']}
+    if only and mode == '--accept':
+        sys.exit('✗ --accept 不能配 --page：基準線是整庫一起收的')
+    base = set() if mode == '--accept' else load_baseline()
 
     pages = doc.pages()
     if not pages:
         sys.exit('✗ 一頁都列不到（Anytype 沒開，或 API token 失效）')
+    if only:
+        pages = [p for p in pages if only.lower() in (p[3] or '').lower()]
+        if not pages:
+            sys.exit('✗ 沒有標題含「%s」的頁' % only)
 
     findings, accepted, broken = [], 0, []
     for _, sid, oid, title in sorted(pages, key=lambda p: p[3]):
