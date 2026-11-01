@@ -1,6 +1,11 @@
 {
  "accepted": [
   [
+   "ABU｜布想",
+   "MARK",
+   "- commit 見 fleetview `輸入框打「/」帶出指令清單`；gateway、網頁版 2026-10-15 已部署，Android versionCode=320 已上架，iPhone 由 i5-13 代裝。"
+  ],
+  [
    "CORE｜memory 與 skills 同步機制",
    "MARK",
    "- 收尾 `**` 後面要留空白再接中文。"
@@ -13,12 +18,12 @@
   [
    "JGB｜Monday 工單流程",
    "MARK",
-   "- `INTAKE_REQUIRE_BODY`（預設 on）：`item_has_requirement()` 檢查單上有沒有非我寫的 update，沒有就不 ack 不 spawn，記 `state[\"assign_wait\"]` 每輪複評，PM 一貼需求由對話串耳接走。`INTAKE_SETTLE_MAX_SEC`（1800，自建單時間起算）到期仍空白照接並註明只有標題。截圖／附件算需求（`text_body` 空時 `_update_has_content()` 看 HTML 有沒有 `<img`、`data-asset_id`、`<a `）。API 錯誤回 (True, False) 照接。等待區不吃 `assign_max_pickup` 額度（走 revisit）。boot log 印 `intake_require_body=on/1800s`，回滾 `INTAKE_REQUIRE_BODY=off`。"
+   "- `INTAKE_REQUIRE_BODY`（預設 on）：單上沒有非我寫的 update 就不 ack 不 spawn，記 `state[\"assign_wait\"]` 每輪複評；`INTAKE_SETTLE_MAX_SEC`（1800）到期仍空白照接並註明只有標題。截圖／附件算需求（看 HTML 的 `<img`、`data-asset_id`、`<a `）。API 錯誤照接。回滾 `INTAKE_REQUIRE_BODY=off`。"
   ],
   [
    "JGB｜Monday 工單流程",
    "MARK",
-   "- 代過需求審核＝直接用 `change_column_value` 把需求審核壓成需求已核可，`sweep_requirement_review()` 一分鐘內轉 executing；log `[guard] … abu 本人，放行` 就是生效。"
+   "- 代過需求審核＝直接 `change_column_value` 把需求審核壓成需求已核可，`sweep_requirement_review()` 一分鐘內轉 executing；log `[guard] … abu 本人，放行` 就是生效。"
   ],
   [
    "JGB｜帳單金流與虛擬帳號",
@@ -38,7 +43,7 @@
   [
    "JGB｜自動接單 watcher",
    "MARK",
-   "- `dev_on_cloud.py`：`ship()`、`data_only_no_preview()`、`synth_meta(**extra)`"
+   "- `dev_on_cloud.py`：`ship()`、`data_only_no_staging()`、`synth_meta(**extra)`"
   ],
   [
    "JGB｜電錶IoT與門鎖",
