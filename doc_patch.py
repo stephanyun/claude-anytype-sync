@@ -451,29 +451,39 @@ def do_patch(sid, oid, title, path, strict=False, force=False, no_verify=False, 
             sys.exit('✗ 回讀與送出不一致或有新 drift：照上面差異修檔後重跑（確定是誤判才 --no-verify）')
 
 
+# 2026-11-04 挖礦：30 天內又 24 次／23 session 先跑 --help 才動手。沒參數／參數錯時第一行就印完整一行用法，
+# 不必再開一次 --help；完整說明（旗標、大頁注意事項）仍在 --help。
+USAGE = ('用法：doc_patch.py --dump "<頁名>" /tmp/x.md → 改 /tmp/x.md → doc_patch.py --patch "<頁名>" /tmp/x.md'
+         '（兩個參數都要給；只檢查檔案：--lint /tmp/x.md；旗標與細節：--help）')
+
+
+def usage_exit(prefix=''):
+    sys.exit((prefix + '\n' if prefix else '') + USAGE)
+
+
 def main():
     # 2026-10-29 挖礦：7 天內 30 個互動 session 第一步都先跑 `doc_patch.py --help`（舊版回「✗ 不認得的旗標：--help」再印用法）。
     # --help／-h 就是要看用法，印 docstring、exit 0，不當錯誤。
     if any(a in ('-h', '--help') for a in sys.argv[1:]):
-        print(__doc__.strip()); return
+        print(USAGE); print(); print(__doc__.strip()); return
     args = [a for a in sys.argv[1:] if not a.startswith('--') or a in ('--dump', '--patch', '--lint')]
     flags = set(a for a in sys.argv[1:] if a.startswith('--')) - {'--dump', '--patch', '--lint'}
     unknown = flags - {'--no-verify', '--strict', '--force'}
     if unknown:
-        sys.exit('✗ 不認得的旗標：%s\n%s' % (' '.join(sorted(unknown)), __doc__))
+        usage_exit('✗ 不認得的旗標：%s' % ' '.join(sorted(unknown)))
     if not args:
-        sys.exit(__doc__)
+        usage_exit()
     mode = args[0]
     if mode == '--lint':
         if len(args) != 2:
-            sys.exit(__doc__)
+            usage_exit('✗ --lint 後面接一個檔案路徑')
         hits = lint(open(args[1], encoding='utf-8').read())
         if not hits:
             print('✓ lint 乾淨'); return
         print('⚠ lint：%d 個已知會壞的寫法' % len(hits)); print_lint(hits)
         sys.exit(4)
     if mode not in ('--dump', '--patch') or len(args) != 3:
-        sys.exit(__doc__)
+        usage_exit('✗ 參數不對（收到：%s）' % ' '.join(args))
     keyword, path = args[1], args[2]
     sid, oid, title = resolve(keyword)
     if mode == '--dump':

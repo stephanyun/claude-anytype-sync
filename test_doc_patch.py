@@ -249,4 +249,10 @@ ok(c == 0 and '--dump  "<頁名關鍵字>" /tmp/x.md' in o and '不認得' not i
 sys.argv = ['doc_patch.py', '-h']
 o, c = run(dp.main)
 ok(c == 0 and '--patch' in o, 'CLI：-h 同 --help')
+# 2026-11-04 挖礦：沒參數／參數錯就先印一行完整用法（dump → 改 → patch），不用再跑 --help
+for argv in (['doc_patch.py'], ['doc_patch.py', '--dump', 'X'], ['doc_patch.py', '--lint']):
+    sys.argv = argv
+    o, c = run(dp.main)
+    ok(c != 0 and o.splitlines()[-1].startswith('用法：doc_patch.py --dump "<頁名>" /tmp/x.md → 改') and '--patch "<頁名>" /tmp/x.md' in o,
+       'CLI：%s 印一行完整用法' % ' '.join(argv[1:]) if len(argv) > 1 else 'CLI：沒參數印一行完整用法')
 print('全部 %d 項通過' % n)
