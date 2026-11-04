@@ -130,9 +130,20 @@ def rname_for_path(path):
 
 # ---------- manifest ----------
 def load_index():
+    # 兩個 session 同時開場（布想開對話、check-routing 連開 171 個 headless）會同時改這份索引，留下
+    # 「完整 JSON＋舊檔尾巴」（2026-11-04 xz-pve-aide 實踩：json 報 Extra data，hook 每個 session 都往
+    # context 塞一行 ⚠）。寫入已改成 tmp＋os.replace，這裡再保一層：尾巴有殘渣就只取前段那個完整物件。
     if os.path.exists(INDEX_PATH):
         with open(INDEX_PATH) as f:
-            raw = json.load(f)
+            text = f.read()
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError:
+            try:
+                raw, _ = json.JSONDecoder().raw_decode(text.lstrip())
+                print("⚠ index.json 尾巴有殘渣，已取前段復原", file=sys.stderr)
+            except json.JSONDecodeError:
+                raise SystemExit("✗ index.json 壞到解析不出來，不敢當空索引跑 reconcile（會把本機 memory 當新檔全推）；請從 memory-git 快照還原")
         if "items" in raw:
             return raw
         # migrate old flat {fname: id}
@@ -141,8 +152,19 @@ def load_index():
 
 
 def save_index(idx):
-    with open(INDEX_PATH, "w") as f:
+    # 先寫 tmp 再 os.replace：同一瞬間另一個 session 讀到的不是半截檔
+    tmp = f"{INDEX_PATH}.tmp.{os.getpid()}"
+    with open(tmp, "w") as f:
         json.dump(idx, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, INDEX_PATH)
+
+
+def index_lock():
+    """整個 reconcile 期間鎖住索引（flock，阻塞式）：同時開場的第二個 session 等前一個做完再跑。"""
+    import fcntl
+    fh = open(f"{INDEX_PATH}.lock", "w")
+    fcntl.flock(fh, fcntl.LOCK_EX)
+    return fh
 
 
 def norm(raw):
@@ -685,6 +707,7 @@ def tag_all():
 
 # ---------- two-way reconcile with guard ----------
 def reconcile(force=False):
+    _lock = index_lock()
     idx = load_index()
     manifest = idx["items"]
     L = local_items()                  # remote_name -> raw

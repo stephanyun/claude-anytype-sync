@@ -71,15 +71,40 @@ def in_my_ns(title):
 
 
 def load_index():
+    # 兩個 session 同時開場（布想開對話、check-routing 連開 171 個 headless）會同時改這份索引，留下
+    # 「完整 JSON＋舊檔尾巴」（2026-11-04 xz-pve-aide 實踩：json 報 Extra data，hook 每個 session 都往
+    # context 塞一行 ⚠）。寫入已改成 tmp＋os.replace，這裡再保一層：尾巴有殘渣就只取前段那個完整物件。
     if os.path.exists(INDEX_PATH):
         with open(INDEX_PATH) as f:
-            return json.load(f)
+            raw = f.read()
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            try:
+                obj, _ = json.JSONDecoder().raw_decode(raw.lstrip())
+                print("⚠ skills_index.json 尾巴有殘渣，已取前段復原", file=sys.stderr)
+                return obj
+            except json.JSONDecodeError:
+                print("⚠ skills_index.json 壞到解析不出來，當空索引（Anytype 可能重複建物件，之後 prune 會收）", file=sys.stderr)
+                return {}
     return {}
 
 
 def save_index(idx):
-    with open(INDEX_PATH, "w") as f:
+    # 先寫 tmp 再 os.replace：同一瞬間另一個 session 讀到的不是半截檔
+    tmp = f"{INDEX_PATH}.tmp.{os.getpid()}"
+    with open(tmp, "w") as f:
         json.dump(idx, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, INDEX_PATH)
+
+
+def index_lock():
+    """整個 sync 期間鎖住索引（flock，阻塞式）：第二個同時開場的 session 等前一個做完再跑，
+    不會兩邊各讀一份舊索引、各建一次物件。鎖檔跟索引同目錄，行程結束自動放。"""
+    import fcntl
+    fh = open(f"{INDEX_PATH}.lock", "w")
+    fcntl.flock(fh, fcntl.LOCK_EX)
+    return fh
 
 
 def skill_files():
@@ -167,6 +192,8 @@ def sync():
     """Push/refresh this machine's skills, then prune ONLY this machine's
     namespace objects whose skill is gone. Other machines' namespaces untouched.
     """
+    _lock = index_lock()
+    save_index(load_index())   # 索引若有殘渣，先落一次乾淨版（不然每支 skill 的 push 都各自復原一遍、警告刷屏）
     print(f"skills_ns = {skills_ns()!r}")
     files = skill_files()
     print(f"found {len(files)} skill(s)")
