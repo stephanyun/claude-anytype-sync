@@ -102,9 +102,17 @@ if git diff --cached --quiet; then
   exit 0
 fi
 STAT="$(git diff --cached --shortstat)"
-git -c user.name="${GIT_AUTHOR_NAME:-$(git config user.name || echo claude)}" \
-    -c user.email="${GIT_AUTHOR_EMAIL:-$(git config user.email || echo claude@localhost)}" \
-    commit -q -m "memory snapshot from ${HOSTNAME_SHORT} $(date '+%F %T')" -m "$STAT"
+# commit 訊息一律中文、寫清楚這顆改了什麼（abu 紅線；舊範本「memory snapshot from <host>」是英文，2026-11-04 改）。
+# 新增／修改／刪除用 name-status 數，R（改名）算進修改。
+NS="$(git diff --cached --name-status)"
+N_ADD="$(printf '%s\n' "$NS" | grep -c '^A' || true)"
+N_MOD="$(printf '%s\n' "$NS" | grep -c '^[MR]' || true)"
+N_DEL="$(printf '%s\n' "$NS" | grep -c '^D' || true)"
+MSG="memory 快照：${HOSTNAME_SHORT} 新增 ${N_ADD}／修改 ${N_MOD}／刪除 ${N_DEL} 則（$(date '+%F %T')）"
+# 沒設 git 身分時退回 abu 本人（這是 stephanyun 名下的私庫），不可退回 claude@localhost 這種 AI 痕跡
+git -c user.name="${GIT_AUTHOR_NAME:-$(git config user.name || echo abu)}" \
+    -c user.email="${GIT_AUTHOR_EMAIL:-$(git config user.email || echo stephanyun@gmail.com)}" \
+    commit -q -m "$MSG" -m "memory_git_sync.sh 每小時排程：先 anytype reconcile 再把各 namespace 目錄快照進私庫。$STAT"
 log "commit: $STAT"
 
 if ! git push -q origin main 2>>"$LOG"; then
