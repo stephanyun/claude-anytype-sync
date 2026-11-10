@@ -231,6 +231,14 @@ if __name__ == "__main__":
     if cmd == "sync":
         if os.environ.get("ANYTYPE_SKIP_SESSION_SYNC") == "1":   # 同 sync.py reconcile 的跳過旗標
             print("skills catalog sync 跳過（ANYTYPE_SKIP_SESSION_SYNC=1）", file=sys.stderr); sys.exit(0)
+        # 2026-11-11：SessionStart hook 叫起來時改背景跑（同 sync.py reconcile，見 session_start.py）；pve 14 天逾時 106 次
+        try:
+            import session_start as _ss
+            _detach = _ss.from_session_start_hook()
+        except Exception:
+            _detach = False
+        if _detach:
+            sys.exit(_ss.run_hook("catalog"))
         sync()
     elif cmd == "list": list_objects()
     else:               print(__doc__)

@@ -10,6 +10,7 @@ to Anytype across machines. Before this repo they were copied by hand and drifte
 | `hook.py` | PostToolUse: auto-push a memory `.md` right after it's written |
 | `hook.sh` | bash 外殼：先看 file_path 是不是 memory 的 .md，不是就不起 python3（settings.json 掛的是這支） |
 | `skills_catalog.py` | one-way mirror of local `SKILL.md` → Anytype "Claude Skills" (namespaced) |
+| `session_start.py` | SessionStart 背景化：`sync.py reconcile`／`skills_catalog.py sync` 被 SessionStart hook 叫起來時（環境有 `CLAUDE_ENV_FILE`）改丟背景 worker、同機同時只跑一個、30 秒內成功過就不重跑、hook 最多等 3 秒；手動／cron 照舊同步跑。逃生口 `ANYTYPE_SS_SYNC=1` |
 
 These three **must be byte-identical on every node.** This repo is the source of truth.
 

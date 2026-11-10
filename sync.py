@@ -872,6 +872,16 @@ if __name__ == "__main__":
         # 每個 session 少等幾秒。要手動對齊就 env -u ANYTYPE_SKIP_SESSION_SYNC 再跑。
         if os.environ.get("ANYTYPE_SKIP_SESSION_SYNC") == "1":
             print("reconcile 跳過（ANYTYPE_SKIP_SESSION_SYNC=1）", file=sys.stderr); sys.exit(0)
+        # 2026-11-11：被 SessionStart hook 叫起來時不在前景跑完——丟給背景 worker、同機同時只跑一個、
+        # 最多等 3 秒就放行（pve 14 天 90 次 hook 逾時都是同一秒連開多個 session 排隊等索引鎖）。
+        # 細節與逃生口見 session_start.py；手動／cron／ssh 跑不受影響，reconcile() 本身沒動。
+        try:
+            import session_start as _ss
+            _detach = _ss.from_session_start_hook() and not force
+        except Exception:
+            _detach = False
+        if _detach:
+            sys.exit(_ss.run_hook("reconcile"))
         reconcile(force=force)
     elif cmd == "search":
         lim, terms, rest = 10, [], list(sys.argv[2:])
