@@ -4,16 +4,20 @@
   doc_patch.py --dump  "<頁名關鍵字>" /tmp/x.md    # 抓下來成可編輯 markdown（旁邊寫 x.md.fp 版本指紋）
   doc_patch.py --patch "<頁名關鍵字>" /tmp/x.md    # lint → 鎖頁 → 比對指紋 → PATCH → 回讀逐行比對＋單頁 drift_check
   doc_patch.py --lint  /tmp/x.md                   # 只做離線靜態檢查，不碰 Anytype
+  doc_patch.py --diff  "<頁名關鍵字>" /tmp/x.md    # 只比不寫：這份檔送上去後頁面會不會變（用回讀驗證同一套逐行正規化）；
+                                                   # 一樣 exit 0、不同 exit 1 印差異。生成頁（gen_doc_*.py）改來源後先看這個
 
 --patch 的旗標：
   --no-verify   跳過回讀驗證（逃生口；只在確定要跳過時用）
   --strict      lint 有警告就不送（預設只印警告照送，但送完回讀仍會逐行比對）
-  --force       指紋不符（dump 之後頁面被別人改過）仍照送；HTTP 500 重送同一份檔也用這個
+  --force       指紋不符（dump 之後頁面被別人改過）仍照送
 
 兩個參數都要給（頁名加引號；第二個是檔案路徑，不是 stdout）。
 dump 檔超過 30KB 別用 Read 整檔（25000 token 上限）：Read 時 limit ≤150 行，或
 `grep -n '^## ' x.md` 找段落、`sed -n 'A,Bp' x.md` 只讀那段；改檔用 Edit／python 定位錨點插入。
 --patch 回 HTTP 500 時立刻用同一份檔加 --force 重送一次（大頁可能已被清空），dump 原稿不要先刪。
+  ↑ 2026-11-11 起這件事 --patch 自己做（見下方「PATCH 失敗的復原」），上面那句只剩最後手段：
+    自動重送與自動還原都失敗時，照它印的備份路徑再 --patch 一次（頁面是空的時不比指紋，不必 --force）。
 denorm／ensure_rule_breaks 與 spec-denorm.py 同一套（三個雷的說明見該檔）。
 
 2026-10-29 起 --patch 自己保證正確，不再靠人記得跑 drift_check：
@@ -24,6 +28,18 @@ denorm／ensure_rule_breaks 與 spec-denorm.py 同一套（三個雷的說明見
      patch 前再抓一次比對，不同就拒絕（兩個 agent 同時改同頁會互蓋）。
   3. 送完回讀：與送出的 markdown 逐行比對（缺行／多行）、只對這頁跑 drift_check 的檢查，
      跟 patch 前比有「新」問題就 exit 1 並印差異前 20 行。
+
+PATCH 失敗的復原（2026-11-11；命理學習庫 135KB 那次 500 後頁面空了半分鐘、--force 還死在 fetch）：
+  Anytype 的 PATCH markdown 是整頁「先刪舊區塊、再塞新區塊」兩步，不是原子的；中間失敗就回
+  HTTP 500 `failed to replace blocks`，頁面可能停在空的。測試頁實測（2026-11-11）：
+    - 單送 800KB 也 200（2 秒），不是頁面大小造成的；
+    - 同一頁兩個 PATCH 同時進去，一個 200 一個 500，偶爾兩個都 200 而內容變兩份（四個並行出現過四份）。
+  所以沒有「分塊寫」可做（API 只有整頁取代），做的是：
+    1. PATCH 前把頁面現況存到 ~/.claude/anytype/doc_backups/patch/<頁id尾 12 碼>/<時間>.md（每頁留最近 5 份）。
+    2. PATCH 回錯（HTTP 5xx／逾時／連線斷）就退避重送同一份（2、5、10 秒後，共 4 次）；每次重送前先回讀，
+       內容其實已經寫進去就當成功，不再多送（多送一次就多一次並行寫的機會）。200 但回讀是空的也算失敗。
+    3. 全部失敗就把備份寫回去（頁面回到 patch 前），exit 5；連還原也失敗才留空頁，exit 6 並印備份路徑。
+    4. 頁面現況是空的（上次失敗留下的）不再 exit：不比指紋直接送（空頁沒有東西可蓋）。
 """
 import difflib, fcntl, hashlib, json, os, re, sys, time, urllib.error, urllib.request
 # realpath 不是 abspath：部署目錄 ~/.claude/anytype/ 的這支是 symlink，
@@ -35,6 +51,9 @@ CFG = json.load(open(os.path.expanduser('~/.claude/anytype/config.json')))
 SPACE_PREF = ('上下文庫', '技術文件')
 LOCK_WAIT = 60          # 同頁鎖最多等幾秒
 LOCK_DIR = '/tmp'
+BACKUP_DIR = os.path.expanduser('~/.claude/anytype/doc_backups/patch')
+BACKUP_KEEP = 5         # 每頁留最近幾份 patch 前備份
+RETRY_DELAYS = (2, 5, 10)   # PATCH 回錯後第 2、3、4 次送出前各等幾秒
 
 
 def api(path, body=None, method=None):
@@ -168,11 +187,14 @@ def utf16_compensate(md):
     return '\n'.join(out)
 
 
-def fetch(sid, oid):
+def fetch(sid, oid, allow_empty=False):
+    """allow_empty=True：空頁回 ''（do_patch 用——PATCH 失敗會留下空頁，那時還 exit 就沒有東西能把它寫回來）。"""
     o = api('/spaces/%s/objects/%s?format=md' % (sid, oid))
     o = o.get('object', o)
     md = o.get('markdown') or ''
-    if not md:
+    if not md.strip():
+        if allow_empty:
+            return ''
         sys.exit('✗ 頁面抓到了但 markdown 是空的')
     # denorm 只剝渲染修飾；md_clean 還做兩件 denorm 不做、但不做就會累積損壞的事：
     #   (a) 表格整列重寫（原樣回填頂層表格會整張散掉）
@@ -333,6 +355,88 @@ class PageLock:
             self.fh = None
 
 
+# ── 2b. patch 前備份、失敗重送、還原 ─────────────────────────────────────────
+def backup_page(oid, title, md):
+    """把 patch 前的頁面內容存到本機，回傳路徑；每頁只留最近 BACKUP_KEEP 份。目錄 700、檔 600（頁面可能含個資）。"""
+    d = os.path.join(BACKUP_DIR, oid[-12:])
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    p = os.path.join(d, '%s-%d.md' % (time.strftime('%Y%m%d-%H%M%S'), os.getpid()))
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+        fh.write(md)
+    with open(os.path.join(d, 'TITLE'), 'w', encoding='utf-8') as fh:
+        fh.write(title + '\n')
+    old = sorted(f for f in os.listdir(d) if f.endswith('.md'))[:-BACKUP_KEEP]
+    for f in old:
+        try:
+            os.unlink(os.path.join(d, f))
+        except OSError:
+            pass
+    return p
+
+
+def _err_text(exc):
+    """HTTPError 帶伺服器回的 message（例：failed to replace blocks），其他例外印型別。"""
+    if isinstance(exc, urllib.error.HTTPError):
+        try:
+            body = exc.read().decode('utf-8', 'replace')
+            try:
+                body = json.loads(body).get('message') or body
+            except ValueError:
+                pass
+        except Exception:
+            body = ''
+        return 'HTTP %s %s' % (exc.code, body[:200].strip())
+    return '%s: %s' % (type(exc).__name__, exc)
+
+
+def _same(sent, back):
+    """回讀內容是否就是送出的那份（逐行正規化後完全相同，連順序與重複次數）。"""
+    return bool(back) and _norm_lines(md_clean(sent)) == _norm_lines(back)
+
+
+def send_with_retry(sid, oid, md, delays=None, label='PATCH'):
+    """整頁寫入，失敗就退避重送。回傳 (成功?, 回讀內容)。
+    只重試「伺服器可能做到一半」的錯（HTTP 5xx、逾時、連線斷）；4xx 是請求本身不對，重送也一樣，直接放棄。
+    每次失敗後都先回讀：內容已經是送出的那份就算成功（500 有時是並行寫的另一方贏了、或回應掉了但寫入完成）。"""
+    delays = RETRY_DELAYS if delays is None else delays
+    payload = {'markdown': utf16_compensate(md)}
+    back = ''
+    for attempt in range(len(delays) + 1):
+        if attempt:
+            time.sleep(delays[attempt - 1])
+        err = None
+        try:
+            api('/spaces/%s/objects/%s' % (sid, oid), payload, method='PATCH')
+        except urllib.error.HTTPError as exc:
+            err = _err_text(exc)
+            if 400 <= exc.code < 500:
+                print('✗ %s 失敗 %s（請求被拒，不重送）' % (label, err))
+                try:
+                    back = fetch(sid, oid, allow_empty=True)
+                except Exception:
+                    back = ''
+                return False, back
+        except (urllib.error.URLError, OSError) as exc:      # 逾時、連線被重設：伺服器可能還在寫
+            err = _err_text(exc)
+        try:
+            back = fetch(sid, oid, allow_empty=True)
+        except Exception as exc:
+            back = ''
+            err = (err + '；' if err else '') + '回讀失敗 ' + _err_text(exc)
+        if err is None and back:
+            return True, back
+        if _same(md, back):
+            print('⚠ %s 回 %s，但回讀內容已是送出的那份，視為成功' % (label, err))
+            return True, back
+        state = '頁面現在是空的' if not back else '頁面現在有 %d 行（不是送出的那份）' % (back.count('\n') + 1)
+        left = len(delays) - attempt
+        print('⚠ %s 第 %d 次失敗：%s；%s%s' % (
+            label, attempt + 1, err or 'HTTP 200 但回讀是空的', state,
+            '，%d 秒後重送' % delays[attempt] if left else ''))
+    return False, back
+
+
 # ── 3. 回讀驗證 ───────────────────────────────────────────────────────────────
 def _norm_line(line):
     """逐行比對前的正規化：Anytype 會吃掉標題裡的 `code`／**粗體** 標記、重排表格空白、
@@ -390,6 +494,11 @@ def verify(title, sent, before, back):
     print('✓ %s 已 PATCH：回讀缺行 %d、多行 %d' % (title, len(lost), len(extra)))
     if diff:
         ok = False
+        if not lost and not extra:
+            # 2026-11-11 測試頁實測：同頁另有不拿鎖的寫入者同時 PATCH 時，兩邊都回 200 而頁面變成兩份接在一起
+            print('   ⚠ 每一行都在、但行數或順序不同（送出 %d 行、回讀 %d 行）：多半是同頁有另一個不走 doc_patch 的'
+                  '寫入者同時在寫，內容被接成多份；確認沒有別人在寫後用同一份檔重跑'
+                  % (len(_norm_lines(md_clean(sent))), len(_norm_lines(back))))
         print('   逐行差異（前 20 行；- 送出有／+ 回讀多）：')
         for d in diff[:20]:
             print('   %s' % d[:140])
@@ -430,16 +539,36 @@ def do_dump(sid, oid, title, path):
         print("   ⚠ 超過 Read 單次上限：Read 時 limit ≤150 行，或 grep -n '^## ' 找段再 sed -n 'A,Bp'")
 
 
+def do_diff(sid, oid, title, path, limit=60):
+    """只讀：檔案內容與頁面現況逐行比（正規化同 verify）。回傳 True＝一樣。"""
+    new = ensure_rule_breaks(open(path, encoding='utf-8').read())
+    page = fetch(sid, oid, allow_empty=True)
+    lost, extra, diff = line_diff(new, page)
+    if not diff:
+        print('✓ %s：與 %s 逐行一致（%d 行）' % (title, path, len(_norm_lines(page))))
+        return True
+    print('✗ %s：與 %s 不同（檔案有頁面沒有 %d 行、頁面有檔案沒有 %d 行；- 檔案／+ 頁面）' % (title, path, len(lost), len(extra)))
+    for d in diff[:limit]:
+        print('   %s' % d[:200])
+    if len(diff) > limit:
+        print('   …（共 %d 行差異，只印前 %d）' % (len(diff), limit))
+    return False
+
+
 def do_patch(sid, oid, title, path, strict=False, force=False, no_verify=False, lock_wait=LOCK_WAIT):
     new = ensure_rule_breaks(open(path, encoding='utf-8').read())
     lh = leading_heading(new)
     if lh is not None:
         sys.exit('✗ 不送：%s\n   %s' % (LEADING_HEADING_WHY, lh.strip()))
     with PageLock(oid, wait=lock_wait):
-        before = fetch(sid, oid)
+        before = fetch(sid, oid, allow_empty=True)
         # 指紋：dump 時的內容 sha 要跟頁面現況一致，否則就是 dump 之後別人改過，照送會蓋掉他的
         fp = read_fp(path)
-        if fp and fp.get('oid') == oid:
+        if not before:
+            # 空頁＝上次 PATCH 失敗留下的（或新建的空頁）：沒有東西可蓋，不比指紋直接送。
+            # 舊版在這裡 fetch() 直接 exit，--force 重送永遠到不了 PATCH（2026-11-11 命理學習庫實踩）。
+            print('⚠ 頁面現況是空的（多半是上次 PATCH 失敗留下的），不比指紋直接送')
+        elif fp and fp.get('oid') == oid:
             if fp['sha'] != fingerprint(before):
                 if force:
                     print('⚠ 指紋不符（dump 之後這頁被改過），--force 照送')
@@ -458,12 +587,25 @@ def do_patch(sid, oid, title, path, strict=False, force=False, no_verify=False, 
             print_lint(hits)
             if strict:
                 sys.exit(4)
+        bak = backup_page(oid, title, before) if before else None
         # 送出的是補償過的版本，回讀比對仍用 new（補償只動標記位置，純文字不變）
-        try:
-            api('/spaces/%s/objects/%s' % (sid, oid), {'markdown': utf16_compensate(new)}, method='PATCH')
-        except urllib.error.HTTPError as exc:
-            sys.exit('✗ PATCH 失敗 HTTP %s：頁面可能已被清空，立刻用同一份檔加 --force 重送' % exc.code)
-        back = fetch(sid, oid)
+        sent_ok, back = send_with_retry(sid, oid, new)
+        if not sent_ok:
+            if not bak:
+                sys.exit('✗ PATCH 失敗，頁面在 patch 前就是空的、沒有備份可還原；修好原因後用同一份檔重跑')
+            if _same(before, back):      # 4xx 之類根本沒動到頁面：不必還原，少寫一次
+                print('✗ PATCH 失敗，頁面仍是 patch 前的內容（沒有被動到）；備份 %s' % bak)
+                sys.exit(5)
+            print('… 重送都失敗，把 patch 前的內容寫回去（備份 %s）' % bak)
+            restored, now = send_with_retry(sid, oid, before, label='還原')
+            if restored:
+                print('✗ PATCH 失敗，頁面已還原成 patch 前的內容（這次的修改沒有寫進去）；稍後用同一份檔重跑')
+                sys.exit(5)
+            print('✗ PATCH 失敗、還原也失敗：頁面現在%s。patch 前的內容在 %s\n'
+                  '   Anytype 恢復後跑：doc_patch.py --patch "%s" %s%s' % (
+                      '是空的' if not now else '不完整（%d 行）' % (now.count('\n') + 1), bak, title, bak,
+                      '' if not now else ' --force'))
+            sys.exit(6)
         write_fp(path, oid, title, back)   # 同一份檔可以再 patch（例如改一點再送），不必重新 dump
         if no_verify:
             print('✓ %s 已 PATCH（--no-verify，未驗證）' % title)
@@ -487,8 +629,8 @@ def main():
     # --help／-h 就是要看用法，印 docstring、exit 0，不當錯誤。
     if any(a in ('-h', '--help') for a in sys.argv[1:]):
         print(USAGE); print(); print(__doc__.strip()); return
-    args = [a for a in sys.argv[1:] if not a.startswith('--') or a in ('--dump', '--patch', '--lint')]
-    flags = set(a for a in sys.argv[1:] if a.startswith('--')) - {'--dump', '--patch', '--lint'}
+    args = [a for a in sys.argv[1:] if not a.startswith('--') or a in ('--dump', '--patch', '--lint', '--diff')]
+    flags = set(a for a in sys.argv[1:] if a.startswith('--')) - {'--dump', '--patch', '--lint', '--diff'}
     unknown = flags - {'--no-verify', '--strict', '--force'}
     if unknown:
         usage_exit('✗ 不認得的旗標：%s' % ' '.join(sorted(unknown)))
@@ -503,12 +645,14 @@ def main():
             print('✓ lint 乾淨'); return
         print('⚠ lint：%d 個已知會壞的寫法' % len(hits)); print_lint(hits)
         sys.exit(4)
-    if mode not in ('--dump', '--patch') or len(args) != 3:
+    if mode not in ('--dump', '--patch', '--diff') or len(args) != 3:
         usage_exit('✗ 參數不對（收到：%s）' % ' '.join(args))
     keyword, path = args[1], args[2]
     sid, oid, title = resolve(keyword)
     if mode == '--dump':
         do_dump(sid, oid, title, path)
+    elif mode == '--diff':
+        sys.exit(0 if do_diff(sid, oid, title, path) else 1)
     else:
         do_patch(sid, oid, title, path, strict='--strict' in flags, force='--force' in flags,
                  no_verify='--no-verify' in flags)

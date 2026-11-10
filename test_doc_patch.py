@@ -4,7 +4,8 @@
 蓋到：lint 每條規則、lint 只掃改動的行、dump 寫指紋、正常 patch 回讀乾淨、
 dump 後他人改過→拒絕／--force 照送、寫回被弄歪→verify 非 0／--no-verify 放行、
 --strict 擋下不送、同頁鎖序列化＋鎖等不到就退出、回讀正規化（H1／fence 語言／表格分隔列／清單符號）、
-單頁 drift 只算新問題、drift_check --page 參數解析。
+單頁 drift 只算新問題、drift_check --page 參數解析、
+PATCH 失敗復原（500 清空→重送、500 但已寫入、200 回空、全敗→還原、還原也敗、4xx 不重送、空頁起手、備份輪替）。
 線上部分（真 Anytype 測試頁）2026-10-29 已跑過：正常、壞寫法、併發兩個、dump 後他人改過，見 commit 訊息。"""
 import contextlib, importlib.util, io, json, os, re, sys, tempfile, threading, time
 
@@ -25,7 +26,13 @@ dp.LOCK_DIR = TMP
 # ── 假 Anytype ────────────────────────────────────────────────────────────────
 SID, OID, TITLE = 'space1', 'page1', '測試｜doc_patch 自驗'
 STORE = {}
-STATE = {'patch_sleep': 0.0, 'inflight': 0, 'max_inflight': 0, 'mangle': False}
+STATE = {'patch_sleep': 0.0, 'inflight': 0, 'max_inflight': 0, 'mangle': False,
+         'faults': [], 'patches': 0}   # faults：每個 PATCH 依序吃掉一個（見 fake_api），吃完恢復正常
+
+
+def http_error(code, message):
+    import urllib.error
+    return urllib.error.HTTPError('http://x', code, 'err', {}, io.BytesIO(json.dumps({'message': message}).encode()))
 
 
 def render(md):
@@ -56,6 +63,23 @@ def fake_api(path, body=None, method=None):
     if path.endswith('/search?limit=200'):
         return {'data': [{'id': OID, 'name': TITLE}]}
     if method == 'PATCH':
+        STATE['patches'] += 1
+        if STATE['faults']:
+            # 模擬 Anytype「先刪再塞」做到一半：500-empty＝刪了沒塞、500-written＝塞完才回錯（或並行另一方贏了）、
+            # 500-keep＝什麼都沒動、200-empty＝回成功但頁面是空的、timeout-empty＝連線逾時且頁面被清、400＝請求被拒
+            f = STATE['faults'].pop(0)
+            if f == '500-empty':
+                STORE[OID] = ''; raise http_error(500, 'failed to replace blocks')
+            if f == '500-written':
+                STORE[OID] = body['markdown']; raise http_error(500, 'failed to replace blocks')
+            if f == '500-keep':
+                raise http_error(500, 'failed to replace blocks')
+            if f == '200-empty':
+                STORE[OID] = ''; return {'object': {'id': OID}}
+            if f == 'timeout-empty':
+                STORE[OID] = ''; raise TimeoutError('timed out')
+            if f == '400':
+                raise http_error(400, 'bad request')
         STATE['inflight'] += 1
         STATE['max_inflight'] = max(STATE['max_inflight'], STATE['inflight'])
         time.sleep(STATE['patch_sleep'])
@@ -136,7 +160,7 @@ ok('TILDE_STRIKE' not in codes('- `~/.claude/a` 與 `~/.claude/b`'), 'lint：兩
 ok('ANGLE_HTML' in codes('- 用 <img> 標籤') and 'ANGLE_HTML' not in codes('- `<img>` 與 <範圍>｜<主題> 與 <br>'), 'lint：裸角括號（code 內／中文佔位／<br> 不報）')
 ok('BOLD_CLOSE_CJK' in codes('- **粗體**緊接中文') and 'BOLD_CLOSE_CJK' not in codes('- **粗體** 留空白'), 'lint：收尾 ** 緊接中文')
 ok('MARK' in codes('- `ro`le 推進字中') and 'MARK' in codes('- 落單 `**` 一顆'), 'lint：drift_check 的 MARK 形狀')
-ok(not dp.lint('# a\n- 乾淨 `x` **y** z\n```\n**`在 fence 裡不管`**\n```\n'), 'lint：乾淨頁＋fence 內不檢查')
+ok(not dp.lint('導言\n# a\n- 乾淨 `x` **y** z\n```\n**`在 fence 裡不管`**\n```\n'), 'lint：乾淨頁＋fence 內不檢查')
 ok(not dp.lint('- **壞 `x`**\n- 新的乾淨行', only_lines={'- **壞 `x`**'}), 'lint：only_lines 只掃改動的行')
 
 # ── dump／正常 patch ──────────────────────────────────────────────────────────
@@ -222,6 +246,54 @@ rcs = sorted(v[1] for v in res.values())
 ok(STATE['max_inflight'] == 1 and rcs == [0, 1] and sum('指紋不符' in v[0] for v in res.values()) == 1,
    '併發兩個 patch：序列化，後者被指紋擋住不互蓋')
 ok(STORE[OID].count('## 8. 併發') == 1, '併發後頁面只有一個人的改動')
+
+# ── PATCH 失敗的復原（2026-11-11 命理學習庫：500 後頁面空了、--force 死在 fetch）──────────
+dp.RETRY_DELAYS = (0, 0, 0)
+def faulty(name, faults, add):
+    dump(name); open(path(name), 'a').write(add)
+    STATE['faults'] = list(faults); STATE['patches'] = 0
+    return run(dp.do_patch, SID, OID, TITLE, path(name))
+o, c = faulty('f1.md', ['500-empty'], '\n## 9. 復原一\n')
+ok(c == 0 and STATE['patches'] == 2 and '頁面現在是空的' in o and 'failed to replace blocks' in o
+   and '## 9. 復原一' in STORE[OID] and '缺行 0、多行 0' in o, '500 且頁面被清空：自動重送同一份，頁面寫回、回讀乾淨')
+o, c = faulty('f2.md', ['500-written'], '\n## 9. 復原二\n')
+ok(c == 0 and STATE['patches'] == 1 and '視為成功' in o, '500 但內容其實已寫入：回讀確認後不再多送')
+o, c = faulty('f3.md', ['200-empty', 'timeout-empty'], '\n## 9. 復原三\n')
+ok(c == 0 and STATE['patches'] == 3 and '## 9. 復原三' in STORE[OID], '200 但回讀是空的／逾時：都算失敗，重送到成功')
+keep = STORE[OID]
+o, c = faulty('f4.md', ['500-empty'] * 4, '\n## 9. 不該留下\n')
+ok(c == 5 and STATE['patches'] == 5 and '已還原成 patch 前的內容' in o and STORE[OID] == keep,
+   '四次都失敗：把 patch 前的備份寫回去，頁面不留空，exit 5')
+o, c = faulty('f5.md', ['500-empty'] * 8, '\n## 9. 不該留下\n')
+bak = re.search(r'patch 前的內容在 (\S+)', o)
+ok(c == 6 and STORE[OID] == '' and bak and dp._same(keep, open(bak.group(1), encoding='utf-8').read())
+   and 'doc_patch.py --patch' in o, '還原也失敗：exit 6、印備份路徑與重跑指令，備份內容＝patch 前')
+# 頁面現在是空的：舊版 fetch() 在這裡 exit，重送永遠到不了 PATCH
+o, c = run(dp.do_patch, SID, OID, TITLE, bak.group(1))
+ok(c == 0 and '頁面現況是空的' in o and STORE[OID] and dp._same(keep, dp.fetch(SID, OID)), '空頁起手：不比指紋直接送，用備份檔救回')
+o, c = run(dp.do_dump, SID, OID, TITLE, path('f6.md'))
+STORE[OID], keep2 = '', STORE[OID]
+o2, c2 = run(dp.do_dump, SID, OID, TITLE, path('f6x.md'))
+STORE[OID] = keep2
+ok(c == 0 and c2 != 0 and '是空的' in o2, 'dump 遇空頁仍拒絕（不把空內容寫成 dump 檔）')
+o, c = faulty('f7.md', ['400'], '\n## 9. 被拒\n')
+ok(c == 5 and STATE['patches'] == 1 and '不重送' in o and '沒有被動到' in o and '## 9. 被拒' not in STORE[OID], '4xx：不重送也不必還原，頁面維持 patch 前')
+bdir = os.path.join(dp.BACKUP_DIR, OID[-12:])
+for i in range(dp.BACKUP_KEEP + 3):
+    time.sleep(0.001); dp.backup_page(OID, TITLE, 'x%d' % i)
+mds = [f for f in os.listdir(bdir) if f.endswith('.md')]
+ok(len(mds) <= dp.BACKUP_KEEP and oct(os.stat(os.path.join(bdir, mds[0])).st_mode & 0o777) == '0o600',
+   '備份：每頁只留最近 %d 份、檔案 600' % dp.BACKUP_KEEP)
+STATE['faults'] = []
+
+# ── --diff：只比不寫 ─────────────────────────────────────────────────────────
+dump('d1.md'); STATE['patches'] = 0
+sys.argv = ['doc_patch.py', '--diff', '自驗', path('d1.md')]
+o, c = run(dp.main)
+ok(c == 0 and '逐行一致' in o, '--diff：dump 檔與頁面一致 exit 0')
+open(path('d1.md'), 'a').write('\n- 只在檔案裡的一行\n')
+o, c = run(dp.main)
+ok(c == 1 and '-- 只在檔案裡的一行' in o and STATE['patches'] == 0, '--diff：不同 exit 1 印差異，沒有送 PATCH')
 
 # ── drift_check --page 參數解析 ──────────────────────────────────────────────
 seen = {}
