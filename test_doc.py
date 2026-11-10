@@ -2,7 +2,9 @@
 """doc.py 離線測試（不碰 Anytype：pages／body 用假資料）。
   python3 test_doc.py
 蓋到：大頁無段落→toc、大頁有段落→段落、小頁整頁、同 session 重讀→只印提示、--fresh 重印、
-不同 session 重印、內容變了重印、TTL 過期重印、toc／list 行為不變、沒 session 鍵不快取。"""
+不同 session 重印、內容變了重印、TTL 過期重印、toc／list 行為不變、沒 session 鍵不快取；
+頁面內容磁碟快取（假 api）：修改時間沒變不重抓、變了只重抓那頁、剛改過的不信任、--fresh／DOC_CACHE=0 不讀快取、
+Anytype 逾時退回舊清單、下架的頁清快取、檔案權限。"""
 import io, json, os, sys, tempfile, importlib.util, contextlib, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -13,6 +15,8 @@ json.dump({'api_key': 'x', 'api_version': 'x', 'api_base': 'http://127.0.0.1:9'}
 spec = importlib.util.spec_from_file_location('doc', os.path.join(TMP, 'doc.py'))
 doc = importlib.util.module_from_spec(spec); spec.loader.exec_module(doc)
 doc.CACHE_DIR = os.path.join(TMP, 'cache')
+doc.DOC_CACHE = os.path.join(TMP, 'doccache')
+REAL_PAGES, REAL_BODY = doc.pages, doc.body   # 下面換成假的；最後一段測磁碟快取要用真的
 
 BIG = '# 大頁\n' + ''.join('## %d. 段落%d\n%s\n' % (i, i, ('中文內容' * 200 + '\n') * 3) for i in range(1, 9))
 SMALL = '# 小頁\n## 1. 唯一段\n小頁內容\n'
@@ -97,4 +101,79 @@ oa = run('read', 'JGB｜大頁測試', '段落7'); ob = run('read', 'JGB｜大�
 ok('中文內容' in oa and oa == ob, '沒 session 鍵：不快取')
 # 12 快取目錄權限 0700
 ok(oct(os.stat(doc.CACHE_DIR).st_mode & 0o777) == '0o700', '快取目錄 0700')
+
+# ── 頁面內容磁碟快取（真的 pages／body，假的 api）────────────────────────────
+doc.pages, doc.body = REAL_PAGES, REAL_BODY
+OLD = '2026-01-01T00:00:00Z'
+REMOTE = {'p1': ['頁一', OLD, 'alpha 一\n'], 'p2': ['頁二', OLD, 'alpha 二\n']}
+CALLS = []
+DOWN = [None]
+
+
+def fake_api(path, data=None, timeout=120):
+    CALLS.append(path)
+    if DOWN[0]:
+        raise DOWN[0]
+    if path.startswith('/spaces?'):
+        return {'data': [{'name': '上下文庫', 'id': 's1'}, {'name': 'Claude Memory', 'id': 's2'}]}
+    if path.endswith('/search?limit=200'):
+        return {'data': [{'id': k, 'name': v[0], 'properties': [{'key': 'last_modified_date', 'date': v[1]}]}
+                         for k, v in REMOTE.items()]}
+    return {'object': {'markdown': REMOTE[path.split('/objects/')[1].split('?')[0]][2]}}
+
+
+doc.api = fake_api
+
+
+def bodies():
+    return [x for x in CALLS if '/objects/' in x]
+
+
+def grep(*a, env=None):
+    del CALLS[:]
+    return run('grep', *a, env=env)
+
+
+g1 = grep('alpha')
+ok(g1.splitlines() == ['上下文庫 / 頁一:1: alpha 一', '上下文庫 / 頁二:1: alpha 二'] and len(bodies()) == 2, '磁碟快取：第一次全抓')
+g2 = grep('alpha')
+ok(g2 == g1 and bodies() == [] and len(CALLS) == 2, '磁碟快取：修改時間沒變，只打清單不抓內容')
+REMOTE['p2'][1:] = ['2026-01-02T00:00:00Z', 'alpha 二改\n']
+g3 = grep('alpha')
+ok('alpha 二改' in g3 and len(bodies()) == 1 and 'p2' in bodies()[0], '磁碟快取：改過的頁只重抓那一頁')
+REMOTE['p2'][2] = 'alpha 偷改\n'      # 修改時間沒動但內容變了（同一秒內兩次寫入）
+ok('偷改' not in grep('alpha'), '磁碟快取：修改時間沒變就用快取（對照組）')
+ok('偷改' in grep('alpha', '--fresh') and len(bodies()) == 2, '--fresh：不讀快取全抓')
+REMOTE['p2'][2] = 'alpha 再改\n'
+ok('再改' in grep('alpha', env={'DOC_CACHE': '0'}) and len(bodies()) == 2, 'DOC_CACHE=0：不讀快取全抓')
+ok('再改' in grep('alpha') and bodies() == [], '--fresh／DOC_CACHE=0 抓回來的有寫進快取')
+# 剛改過（抓的時間離修改時間不到 SETTLE）的不信任：每次都重抓
+REMOTE['p1'][1:] = [time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'alpha 剛改\n']
+grep('alpha'); grep('alpha')
+ok(len(bodies()) == 1 and 'p1' in bodies()[0], '磁碟快取：剛改過的頁不信任快取，照樣重抓')
+REMOTE['p1'][1:] = ['2026-01-03T00:00:00Z', 'alpha 一\n']; grep('alpha')
+# 模擬 doc_patch 寫完刪快取
+os.unlink(os.path.join(doc.DOC_CACHE, 'p1.json')); grep('alpha')
+ok(len(bodies()) == 1 and 'p1' in bodies()[0], '磁碟快取：快取檔被刪（doc_patch 寫完）就重抓')
+# Anytype 逾時 → 退回舊清單＋快取
+DOWN[0] = TimeoutError('timed out')
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    g4 = grep('alpha')
+ok(g4.splitlines() == ['上下文庫 / 頁一:1: alpha 一', '上下文庫 / 頁二:1: alpha 再改'] and '秒前的清單' in err.getvalue(),
+   'Anytype 逾時：退回舊清單與快取，stderr 講明')
+try:
+    grep('alpha', '--fresh'); raised = False
+except OSError:
+    raised = True
+ok(raised, 'Anytype 逾時＋--fresh：不退回，照舊報錯')
+DOWN[0] = None
+# 下架的頁清快取；空內容不存；權限
+del REMOTE['p2']; REMOTE['p3'] = ['頁三', OLD, '']
+grep('alpha')
+fs = sorted(os.listdir(doc.DOC_CACHE))
+ok(fs == ['_pages.json', 'p1.json'], '磁碟快取：不在清單上的頁清掉、空內容不存（%s）' % fs)
+ok(oct(os.stat(doc.DOC_CACHE).st_mode & 0o777) == '0o700'
+   and oct(os.stat(os.path.join(doc.DOC_CACHE, 'p1.json')).st_mode & 0o777) == '0o600', '磁碟快取：目錄 0700、檔 0600')
+ok(run('list').splitlines() == ['%-8s %s' % ('上下文庫', '頁一'), '%-8s %s' % ('上下文庫', '頁三')], 'list（真 pages）：只列文件 space')
 print('全部 %d 項通過' % n)

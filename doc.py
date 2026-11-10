@@ -17,9 +17,19 @@
 session 鍵取 CLAUDE_CODE_SESSION_ID，沒有就 CLAUDE_PID，再沒有就沿 PPID 鏈找 claude 程序；
 三者都沒有（人在終端機手打）就不快取、每次都印。
 
+頁面內容磁碟快取（2026-11-11）：grep 每次要抓全部頁（60 多頁、共 1.5MB），Anytype 閒的時候 1 秒，
+但它正在被寫（別的 session 在 PATCH 大頁、sync.py 在推）或機器滿載時每個請求都排隊，實測一次 grep 60～69 秒。
+現在每頁內容存在 ~/.claude/anytype/doccache/<頁 id>.json，鍵是清單 API 回的 last_modified_date：
+每次仍打一次清單（1 個請求）拿各頁最新的修改時間，時間沒變的頁直接用快取，變了的才重抓那一頁。
+  - 修改時間只到秒，而 PATCH 是「先刪再塞」兩步：抓的時間離修改時間不到 60 秒的那份不信任，下次照樣重抓。
+  - doc_patch.py 寫完（不論成敗）會刪掉那一頁的快取；空內容不存。
+  - 清單 API 4 秒沒回（Anytype 忙）而本機有上一次的清單時，改用上一次的清單＋快取，並在 stderr 講明是幾秒前的；
+    沒有上一次的清單就照舊等到回來為止。
+  - --fresh 或環境變數 DOC_CACHE=0：完全不讀快取、不用舊清單（抓回來的照樣寫進快取）。
+
 Anytype 讀回的 markdown 會把底線跳脫成 \\_，本工具已還原。
 """
-import json, sys, urllib.request, re, os, time, hashlib, subprocess
+import json, sys, urllib.request, urllib.error, re, os, time, hashlib, subprocess, calendar
 
 CFG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
 c = json.load(open(CFG))
@@ -32,24 +42,98 @@ CACHE_TTL = 2 * 3600      # 同 session 快取 2 小時
 CACHE_DIR = '/tmp/doc-cache-%d' % os.getuid()
 
 
-def api(path, data=None):
+DOC_CACHE = os.path.join(os.path.dirname(CFG), 'doccache')   # 頁面內容磁碟快取（頁面可能含個資：目錄 700、檔 600）
+PAGES_FILE = '_pages.json'   # 上一次成功拿到的清單（Anytype 忙的時候退回來用）
+SETTLE = 60               # 抓的時間離頁面修改時間不到這麼多秒的快取不信任（修改時間只到秒；PATCH 不是原子的）
+BUSY_TIMEOUT = 4          # 有舊清單可退時，清單 API 最多等幾秒
+LM = {}                   # 頁 id → 這次清單回的 last_modified_date（body() 拿來當快取鍵）
+STALE = False             # 這次的清單是不是退回舊的
+
+
+def api(path, data=None, timeout=120):
     r = urllib.request.Request(c['api_base'] + path, headers=H,
                                data=json.dumps(data).encode() if data else None)
-    return json.load(urllib.request.urlopen(r, timeout=120))
+    return json.load(urllib.request.urlopen(r, timeout=timeout))
 
 
-def spaces():
-    return {s.get('name'): s['id'] for s in api('/spaces?limit=50')['data'] if s.get('name')}
+def spaces(timeout=120):
+    return {s.get('name'): s['id'] for s in api('/spaces?limit=50', timeout=timeout)['data'] if s.get('name')}
+
+
+def cache_on():
+    return not FRESH and os.environ.get('DOC_CACHE', '1') != '0'
+
+
+def _load(name):
+    try:
+        with open(os.path.join(DOC_CACHE, name), encoding='utf-8') as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
+def _save(name, obj):
+    """原子寫入；寫不進去不影響讀。"""
+    try:
+        os.makedirs(DOC_CACHE, mode=0o700, exist_ok=True)
+        tmp = os.path.join(DOC_CACHE, '.%s.%d.tmp' % (name, os.getpid()))
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+            json.dump(obj, fh, ensure_ascii=False)
+        os.replace(tmp, os.path.join(DOC_CACHE, name))
+    except Exception:
+        pass
+
+
+def _last_modified(o):
+    for p in o.get('properties') or []:
+        if p.get('key') == 'last_modified_date':
+            return p.get('date') or ''
+    return ''
+
+
+def _epoch(iso):
+    try:
+        return calendar.timegm(time.strptime(iso[:19], '%Y-%m-%dT%H:%M:%S'))
+    except Exception:
+        return None
+
+
+def _fetch_pages(timeout):
+    out = []
+    for nm, sid in spaces(timeout).items():
+        if nm not in DOC_SPACES:
+            continue
+        for o in api('/spaces/%s/search?limit=200' % sid, {"query": "", "types": ["page"]}, timeout=timeout)['data']:
+            out.append([nm, sid, o['id'], o.get('name', ''), _last_modified(o)])
+    return out
 
 
 def pages(only=None):
-    out = []
-    for nm, sid in spaces().items():
-        if nm not in DOC_SPACES or (only and nm != only):
-            continue
-        for o in api('/spaces/%s/search?limit=200' % sid, {"query": "", "types": ["page"]})['data']:
-            out.append((nm, sid, o['id'], o.get('name', '')))
-    return out
+    global STALE
+    old = _load(PAGES_FILE) if cache_on() else None
+    try:
+        rows = _fetch_pages(BUSY_TIMEOUT if old else 120)
+        STALE = False
+        _save(PAGES_FILE, {'at': time.time(), 'pages': rows})
+        # 已不在清單上的頁（封存／刪除）把快取清掉，免得越積越多
+        try:
+            keep = set(r[2] + '.json' for r in rows) | {PAGES_FILE}
+            for f in os.listdir(DOC_CACHE):
+                if f.endswith('.json') and f not in keep:
+                    os.unlink(os.path.join(DOC_CACHE, f))
+        except OSError:
+            pass
+    except OSError as exc:      # 逾時、連線被拒（URLError／TimeoutError 都是 OSError）
+        if not old or isinstance(exc, urllib.error.HTTPError):
+            raise
+        rows = old['pages']
+        STALE = True
+        print('# ⚠ Anytype %d 秒內沒回應（%s），改用 %d 秒前的清單與快取；要等到最新的加 --fresh'
+              % (BUSY_TIMEOUT, type(exc).__name__, time.time() - old.get('at', 0)), file=sys.stderr)
+    LM.clear()
+    LM.update((r[2], r[4]) for r in rows)
+    return [tuple(r[:4]) for r in rows if not only or r[0] == only]
 
 
 def unescape(md):
@@ -59,8 +143,24 @@ def unescape(md):
     return re.sub(r'\\+([_*`\[\]#|])', r'\1', md or '')
 
 
-def body(sid, oid):
+def fetch_body(sid, oid):
     return unescape(api('/spaces/%s/objects/%s?format=md' % (sid, oid))['object'].get('markdown', ''))
+
+
+def body(sid, oid):
+    """頁面內容；清單回的修改時間跟快取那份一樣就不打 API（規則見檔頭「頁面內容磁碟快取」）。"""
+    lm = LM.get(oid) or ''
+    if lm and cache_on():
+        d = _load(oid + '.json')
+        if d and d.get('lm') == lm and d.get('md'):
+            t = _epoch(lm)
+            if STALE or (t is not None and d.get('at', 0) - t >= SETTLE):
+                return d['md']
+    at = time.time()            # 抓之前記時間：抓的途中被改，下次會因為離修改時間太近而重抓
+    md = fetch_body(sid, oid)
+    if lm and md and not STALE:
+        _save(oid + '.json', {'lm': lm, 'at': at, 'md': md})
+    return md
 
 
 def sections(md):

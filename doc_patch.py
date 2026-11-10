@@ -53,6 +53,7 @@ LOCK_WAIT = 60          # 同頁鎖最多等幾秒
 LOCK_DIR = '/tmp'
 BACKUP_DIR = os.path.expanduser('~/.claude/anytype/doc_backups/patch')
 BACKUP_KEEP = 5         # 每頁留最近幾份 patch 前備份
+DOC_CACHE_DIR = os.path.expanduser('~/.claude/anytype/doccache')   # doc.py 的頁面內容快取，寫完要讓它失效
 RETRY_DELAYS = (2, 5, 10)   # PATCH 回錯後第 2、3、4 次送出前各等幾秒
 
 
@@ -375,6 +376,15 @@ def backup_page(oid, title, md):
     return p
 
 
+def drop_doc_cache(oid):
+    """刪掉 doc.py 對這一頁的內容快取（~/.claude/anytype/doccache/<頁 id>.json），寫入後 doc.py 一定重抓。
+    doc.py 本來就會比清單回的修改時間，但修改時間只到秒、PATCH 又是兩步，這裡直接刪最保險。"""
+    try:
+        os.unlink(os.path.join(DOC_CACHE_DIR, oid + '.json'))
+    except OSError:
+        pass
+
+
 def _err_text(exc):
     """HTTPError 帶伺服器回的 message（例：failed to replace blocks），其他例外印型別。"""
     if isinstance(exc, urllib.error.HTTPError):
@@ -589,7 +599,10 @@ def do_patch(sid, oid, title, path, strict=False, force=False, no_verify=False, 
                 sys.exit(4)
         bak = backup_page(oid, title, before) if before else None
         # 送出的是補償過的版本，回讀比對仍用 new（補償只動標記位置，純文字不變）
-        sent_ok, back = send_with_retry(sid, oid, new)
+        try:
+            sent_ok, back = send_with_retry(sid, oid, new)
+        finally:
+            drop_doc_cache(oid)     # 不論成敗（含被中斷）：頁面可能已經被動到
         if not sent_ok:
             if not bak:
                 sys.exit('✗ PATCH 失敗，頁面在 patch 前就是空的、沒有備份可還原；修好原因後用同一份檔重跑')
@@ -597,7 +610,10 @@ def do_patch(sid, oid, title, path, strict=False, force=False, no_verify=False, 
                 print('✗ PATCH 失敗，頁面仍是 patch 前的內容（沒有被動到）；備份 %s' % bak)
                 sys.exit(5)
             print('… 重送都失敗，把 patch 前的內容寫回去（備份 %s）' % bak)
-            restored, now = send_with_retry(sid, oid, before, label='還原')
+            try:
+                restored, now = send_with_retry(sid, oid, before, label='還原')
+            finally:
+                drop_doc_cache(oid)
             if restored:
                 print('✗ PATCH 失敗，頁面已還原成 patch 前的內容（這次的修改沒有寫進去）；稍後用同一份檔重跑')
                 sys.exit(5)
