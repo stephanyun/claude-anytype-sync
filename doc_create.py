@@ -7,11 +7,13 @@
 - 同名頁已存在就拒絕（避免同名物件互相覆蓋，見 sync.py 的三類靜默損壞）。
 - 送出前先過 md_clean（astral emoji → BMP、表格整列重寫），跟 doc_patch 同一套；
   建好之後回讀比對 H2 數，不一致就印出來給人看。
+- 第一個非空行是標題就拒絕：Anytype 會把頁首標題降成一般文字（2026-11-11 建 JGB｜LINE LIFF 資料管理實踩），
+  在前面加一行導言。
 """
 import json, os, sys, urllib.request
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from md_clean import clean as md_clean
-from doc_patch import ensure_rule_breaks
+from doc_patch import ensure_rule_breaks, leading_heading, LEADING_HEADING_WHY
 
 CFG = json.load(open(os.path.expanduser('~/.claude/anytype/config.json')))
 SPACE = '上下文庫'
@@ -35,6 +37,9 @@ def main():
     if len(sys.argv) != 3:
         sys.exit(__doc__)
     name, path = sys.argv[1], sys.argv[2]
+    lh = leading_heading(open(path, encoding='utf-8').read())
+    if lh is not None:
+        sys.exit('✗ 不建：%s\n   %s' % (LEADING_HEADING_WHY, lh.strip()))
     sid = next((s['id'] for s in api('/spaces?limit=100')['data'] if s.get('name') == SPACE), None)
     if not sid:
         sys.exit('✗ 找不到 space「%s」' % SPACE)

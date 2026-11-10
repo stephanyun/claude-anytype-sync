@@ -231,6 +231,20 @@ def lint_line(line):
     return hits
 
 
+LEADING_HEADING_WHY = ('頁首第一個區塊是標題：Anytype 會把它降成一般文字（# 號整個不見，H2 少一個），'
+                       '空行、零寬字元擋不住；在它前面加一行導言（一句話說這頁是什麼）')
+
+
+def leading_heading(md):
+    """第一個非空行是 markdown 標題就回傳那行，否則 None。
+    2026-11-11 實測（建頁 body 與 PATCH markdown 兩條都一樣）：頁首的 #／##／### 都被降成段落；
+    前面有任何非標題行（導言、---、&nbsp;）就保留。"""
+    for line in md.split('\n'):
+        if line.strip():
+            return line if re.match(r'^#{1,6}\s', line.strip()) else None
+    return None
+
+
 def lint(md, only_lines=None):
     """回傳 [(行號, 代碼, 說明, 整行)]。only_lines＝只檢查這些（strip 後的）行，None＝全掃。code fence 內不檢查。"""
     out, fence = [], False
@@ -246,6 +260,10 @@ def lint(md, only_lines=None):
             out.append((i, code, why, line))
     if md.count('```') % 2:
         out.append((0, 'FENCE_UNPAIRED', '``` 不成對', ''))
+    # 不受 only_lines 限制：頁面現況不可能有頁首標題（早被降掉了），新檔有就一定是新問題
+    lh = leading_heading(md)
+    if lh is not None:
+        out.insert(0, (1, 'LEADING_HEADING', LEADING_HEADING_WHY, lh))
     return out
 
 
@@ -414,6 +432,9 @@ def do_dump(sid, oid, title, path):
 
 def do_patch(sid, oid, title, path, strict=False, force=False, no_verify=False, lock_wait=LOCK_WAIT):
     new = ensure_rule_breaks(open(path, encoding='utf-8').read())
+    lh = leading_heading(new)
+    if lh is not None:
+        sys.exit('✗ 不送：%s\n   %s' % (LEADING_HEADING_WHY, lh.strip()))
     with PageLock(oid, wait=lock_wait):
         before = fetch(sid, oid)
         # 指紋：dump 時的內容 sha 要跟頁面現況一致，否則就是 dump 之後別人改過，照送會蓋掉他的
