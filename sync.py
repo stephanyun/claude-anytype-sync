@@ -311,7 +311,11 @@ def remote_upsert(rname, raw, idx):
             req("PATCH", f"/spaces/{space_id()}/objects/{oid}",
                 {"markdown": wrap(raw)})
             full = req("GET", f"/spaces/{space_id()}/objects/{oid}")
-            if chash(unwrap(full.get("object", full).get("markdown", ""))) == new_hash:
+            obj = full.get("object", full)
+            # 封存（垃圾桶）裡的物件 PATCH 照樣成功、GET 也讀得回來，但 remote_list 不算它：manifest 記「已同步」，
+            # 下一次 reconcile 看到「本機有、遠端沒有、manifest 有」就把本機檔刪掉。2026-11-11 jgb__MEMORY.md 實踩
+            # （推測是 Anytype 逾時那幾分鐘 PATCH 沒對上 → 走舊路徑封存後 POST 也逾時）。封存的一律當沒對上，往下重建。
+            if not obj.get("archived") and chash(unwrap(obj.get("markdown", ""))) == new_hash:
                 idx["items"][rname] = {"id": oid, "hash": new_hash}
                 set_project(oid, rname)      # tag can be dropped by edits; re-assert
                 return oid
