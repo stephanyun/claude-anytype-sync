@@ -143,6 +143,26 @@ def unescape(md):
     return re.sub(r'\\+([_*`\[\]#|])', r'\1', md or '')
 
 
+_TBL_SP = re.compile(r' {2,}')
+_TBL_BR = re.compile(r'(\|\s*)(?:<br>\s*)+|(?:\s*<br>)+(\s*\|)')
+_TBL_DASH = re.compile(r'-{4,}')
+
+
+def compact(md):
+    """印出前把 Anytype 表格的補白壓掉（只動 code fence 外、| 開頭的列；不改頁面本身）。
+    2026-11-12：Anytype 回的 markdown 把表格每格補空白到等寬、格頭格尾各塞一個 <br>、分隔列補滿破折號，
+    全部 64 頁約 12 萬字是純補白（命理學習庫一段表 2.3k 線上變 5.9k）；讀進 context 都是 token。"""
+    out, fence = [], False
+    for l in md.split('\n'):
+        if l.lstrip().startswith('```'):
+            fence = not fence
+        elif not fence and l.lstrip().startswith('|'):
+            l = _TBL_BR.sub(lambda m: (m.group(1) or '') + (m.group(2) or ''), l)
+            l = _TBL_DASH.sub('---', _TBL_SP.sub(' ', l))
+        out.append(l if fence else l.rstrip())   # 行尾也被補了空白（每行約 3 格）
+    return '\n'.join(out)
+
+
 def fetch_body(sid, oid):
     return unescape(api('/spaces/%s/objects/%s?format=md' % (sid, oid))['object'].get('markdown', ''))
 
@@ -251,7 +271,7 @@ def emit(title, secs, chunks):
             print('%s  (%d 字)' % (h, len(t)))
         return
     for _, t in chunks:
-        print(t)
+        print(compact(t))
     if sess:
         cache_put(cache_path(sess, title, secs), title, secs, digest, len(text))
 
@@ -313,7 +333,7 @@ def main():
             md = body(sid, oid)
             for i, line in enumerate(md.split('\n')):
                 if arg.lower() in line.lower():
-                    print('%s / %s:%d: %s' % (nm, title, i + 1, line.strip()[:160]))
+                    print('%s / %s:%d: %s' % (nm, title, i + 1, compact(line.strip())[:160]))
     else:
         sys.exit(__doc__)
 
