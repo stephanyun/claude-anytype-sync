@@ -6,6 +6,7 @@
   doc.py read <頁名關鍵字> [段落關鍵字]  印整頁；給段落關鍵字就只印標題命中的那幾段
                                       （命中的 H2 ≥8000 字且有 H3 時只印導言＋H3 目錄，加 --full 印整段）
   doc.py grep <關鍵字>                 全 space 全文搜尋，印出命中的頁名與該行
+                                      （每頁最多 6 行、全部最多 60 行，其餘印計數；--all 全印）
 
 大頁（上下文庫很多頁 3 萬～11 萬字元，整頁＝1.5 萬～6 萬 token）一律 toc → read 段落，
 別整頁讀；段落關鍵字可給多個（空白分隔，任一命中就印）。
@@ -39,6 +40,8 @@ H = {'Authorization': 'Bearer ' + c['api_key'],
      'Content-Type': 'application/json'}
 DOC_SPACES = ('上下文庫',)
 BIG_BYTES = 8192          # 與 ~/.claude/hooks/landmine-gate.sh R16 同門檻（匯出檔 wc -c ≥ 8192）
+GREP_PER_PAGE = 6         # grep 每頁最多印幾行命中（2026-11-12：「staging」一次 251 行 5.4 萬字，近 3 天 137 次 grep 有 127 次靠 | head 截，
+GREP_TOTAL = 60           # 截到的都是排前面那幾頁）；全部最多印幾行。其餘每頁印一行計數，--all 全印
 BIG_H2 = 8000            # read 命中的 H2 字數門檻（字元）：超過且有 H3 就只印目錄；與 core-devflow-audit/scripts/check-docrefs.py BIG 同
 CACHE_TTL = 2 * 3600      # 同 session 快取 2 小時
 CACHE_DIR = '/tmp/doc-cache-%d' % os.getuid()
@@ -286,7 +289,8 @@ def main():
     argv = [a for a in sys.argv[1:] if a != '--fresh']
     FRESH = len(argv) != len(sys.argv) - 1
     full = '--full' in argv
-    argv = [a for a in argv if a != '--full']
+    allhits = '--all' in argv
+    argv = [a for a in argv if a not in ('--full', '--all')]
     cmd = argv[0] if argv else 'list'
     arg = ' '.join(argv[1:])
     if cmd == 'list':
@@ -345,11 +349,22 @@ def main():
             chunks.append((h, txt))
         emit(title, secs, chunks)
     elif cmd == 'grep':
+        shown = 0
+        more = []   # (頁, 沒印的行數)
         for nm, sid, oid, title in pages():
             md = body(sid, oid)
-            for i, line in enumerate(md.split('\n')):
-                if arg.lower() in line.lower():
-                    print('%s / %s:%d: %s' % (nm, title, i + 1, compact(line.strip())[:160]))
+            hits = [(i, line) for i, line in enumerate(md.split('\n')) if arg.lower() in line.lower()]
+            if not hits:
+                continue
+            room = len(hits) if allhits else max(0, min(GREP_PER_PAGE, GREP_TOTAL - shown))
+            for i, line in hits[:room]:
+                print('%s / %s:%d: %s' % (nm, title, i + 1, compact(line.strip())[:160]))
+            shown += room
+            if len(hits) > room:
+                more.append(('%s / %s' % (nm, title), len(hits) - room))
+        if more:
+            print('# 還有 %d 行沒印（每頁最多 %d 行、全部最多 %d 行）：%s。要看某頁用 doc.py toc／read 讀那段，全印加 --all'
+                  % (sum(n for _, n in more), GREP_PER_PAGE, GREP_TOTAL, '、'.join('%s +%d' % m for m in more)))
     else:
         sys.exit(__doc__)
 
