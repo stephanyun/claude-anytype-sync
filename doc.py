@@ -4,6 +4,7 @@
   doc.py list [space]                 列出所有頁（或某個 space 的頁）
   doc.py toc  <頁名關鍵字>             只列標題（## / ###）與每段字元數，先看再挑段
   doc.py read <頁名關鍵字> [段落關鍵字]  印整頁；給段落關鍵字就只印標題命中的那幾段
+                                      （命中的 H2 ≥8000 字且有 H3 時只印導言＋H3 目錄，加 --full 印整段）
   doc.py grep <關鍵字>                 全 space 全文搜尋，印出命中的頁名與該行
 
 大頁（上下文庫很多頁 3 萬～11 萬字元，整頁＝1.5 萬～6 萬 token）一律 toc → read 段落，
@@ -38,6 +39,7 @@ H = {'Authorization': 'Bearer ' + c['api_key'],
      'Content-Type': 'application/json'}
 DOC_SPACES = ('上下文庫',)
 BIG_BYTES = 8192          # 與 ~/.claude/hooks/landmine-gate.sh R16 同門檻（匯出檔 wc -c ≥ 8192）
+BIG_H2 = 8000            # read 命中的 H2 字數門檻（字元）：超過且有 H3 就只印目錄；與 core-devflow-audit/scripts/check-docrefs.py BIG 同
 CACHE_TTL = 2 * 3600      # 同 session 快取 2 小時
 CACHE_DIR = '/tmp/doc-cache-%d' % os.getuid()
 
@@ -283,6 +285,8 @@ def main():
     global FRESH
     argv = [a for a in sys.argv[1:] if a != '--fresh']
     FRESH = len(argv) != len(sys.argv) - 1
+    full = '--full' in argv
+    argv = [a for a in argv if a != '--full']
     cmd = argv[0] if argv else 'list'
     arg = ' '.join(argv[1:])
     if cmd == 'list':
@@ -327,7 +331,19 @@ def main():
                       if lvl == 3 and any(k.lower() in h.lower() for k in secs)]
         if not picked:
             sys.exit('沒有標題含「%s」的段落；先 doc.py toc "%s" 看有哪些段' % ('／'.join(secs), title))
-        emit(title, secs, [(h, '\n'.join(lines[a:b]).rstrip() + '\n') for h, a, b in picked])
+        chunks = []
+        for h, a, b in picked:
+            txt = '\n'.join(lines[a:b]).rstrip() + '\n'
+            # 2026-11-12：關鍵字命中 H2 時整個 H2（含底下所有 H3）都會印，命理學習庫「阿拉伯地占」一次 3.7 萬字。
+            # H2 ≥ BIG_H2 字且有 H3 時改印導言＋H3 目錄，要整段加 --full；門檻與 check-docrefs.py 的 BIG 相同。
+            subs = [(h3, a3, b3) for lvl, h3, a3, b3 in sections(md) if lvl == 3 and a < a3 < b]
+            if not full and subs and len(txt) >= BIG_H2:
+                intro = '\n'.join(lines[a:subs[0][1]]).rstrip()
+                toc = '\n'.join('    %s  (%d 字)' % (h3, len('\n'.join(lines[a3:b3]))) for h3, a3, b3 in subs)
+                txt = ('%s\n\n# 本段 %d 字，不整段印；底下 H3 用 doc.py read "%s" "<H3 標題的一段字>" 讀，要整段加 --full\n%s\n'
+                       % (intro, len(txt), title, toc))
+            chunks.append((h, txt))
+        emit(title, secs, chunks)
     elif cmd == 'grep':
         for nm, sid, oid, title in pages():
             md = body(sid, oid)
