@@ -6,11 +6,6 @@
    "- 2026-10-30 實例（m2-13 簽、i5-13 裝）：abu 在家要用 i5-13 裝，但 i5-13 agent 停用中、ssh 簽章回 `errSecInternalComponent`。做法：踢 m2-13 renew 簽好 `/Users/abu/FleetDist/FleetView-signed.ipa`（它看不到手機只更新 IPA）→ scp 到 i5-13 解壓 → `xcrun devicectl device install app --device B1E9F1A3-C8CD-52E3-BD22-BAECCD514429 Payload/FleetView.app`，看到「App installed:」才算裝上（輸出前幾行會被 tail 截掉）。⚠️ 從 ssh 直接跑 auto-renew.sh 在 i5-13 第 318 行死在 `Illegal byte sequence`（推測：ssh 帶 UTF-8 語系，bash 3.2 解析 `$puuid，` 出錯；launchd 跑沒事）。只有 Abu 能做的是把 iPhone 解鎖（鎖著回 device is locked／CoreDeviceError 10003，續簽 log 寫「安裝失敗（手機鎖著？）」）：掛一個每 15 秒重試的迴圈，請他解鎖放著就會自己裝上。"
   ],
   [
-   "ABU｜布想",
-   "MARK",
-   "- commit 見 fleetview `輸入框打「/」帶出指令清單`；gateway、網頁版 2026-10-15 已部署，Android versionCode=320 已上架，iPhone 由 i5-13 代裝。"
-  ],
-  [
    "CORE｜memory 與 skills 同步機制",
    "MARK",
    "- 收尾 `**` 後面要留空白再接中文。"
@@ -21,39 +16,19 @@
    "- 段落含 astral-plane emoji（U+10000 以上）時，所有 `**` 與反引號每寫回一次右移一格。根治＝`md_clean.ASTRAL` 換成 BMP 字元，表要涵蓋全庫用到的每一種。"
   ],
   [
-   "JGB｜Monday 工單流程",
+   "JGB｜帳單金流與虛擬帳號",
    "MARK",
-   "- `INTAKE_REQUIRE_BODY`（預設 on）：單上沒有非我寫的 update 就不 ack 不 spawn，記 `state[\"assign_wait\"]` 每輪複評；`INTAKE_SETTLE_MAX_SEC`（1800）到期仍空白照接並註明只有標題。截圖／附件算需求（看 HTML 的 `<img`、`data-asset_id`、`<a `）。API 錯誤照接。回滾 `INTAKE_REQUIRE_BODY=off`。"
-  ],
-  [
-   "JGB｜Monday 工單流程",
-   "MARK",
-   "- 代過需求審核＝直接 `change_column_value` 把需求審核壓成需求已核可，`sweep_requirement_review()` 一分鐘內轉 executing；log `[guard] … abu 本人，放行` 就是生效。"
+   "- ⚠️ 「有推但回查撲空」：通知早於 OrderPayQuery 可查，回 `S0001 – 處理成功，查無資料或是查詢條件組合不相符`，`PaymentController` Log::error 後 return 不回 `Status=S`。⛔ **不可改成無條件回 S**：不回 S 才會觸發永豐約 10 分鐘自動重送（通常第 3 次、約 23 分轉 S0000）。看同 PayToken 多筆 `永豐訊息查詢結果API/解密後` 是否最終 S0000；該 ERROR 是款項卡住的唯一警報，勿關。"
   ],
   [
    "JGB｜帳單金流與虛擬帳號",
    "MARK",
-   "- ⚠️ 另一型「有推但回查撲空」：到款通知早於 OrderPayQuery 可查時點，回 `S0001 – 處理成功，查無資料或是查詢條件組合不相符`，`PaymentController` 記 Log::error 後 return（不回 `Status=S`）。⛔ **不可改成無條件回 S**——不回 S 正是觸發永豐每約 10 分鐘自動重送的機制（通常第 3 次、付款後約 23 分轉 S0000）。判定：同 PayToken 多筆 `永豐訊息查詢結果API/解密後`，看 Description 是否最終 S0000。該 ERROR 是款項永久卡住的唯一警報，不要為降噪關掉。"
+   "- 標題「出帳金額明細」；欄位 `物件｜租客｜帳單編號｜帳單ID｜帳務日期｜收款金額｜代收手續費｜最後出帳金額｜備註`；尾三行 `合計` → `出帳手續費（每次 30 元）` → `總出帳金額`；日期分 `租客交易日期`／`國泰帳務日期`（任一空退回另一欄）；檔名 `結算週_團隊名稱_出帳明細.xlsx`。"
   ],
   [
    "JGB｜帳單金流與虛擬帳號",
    "MARK",
-   "- 標題「出帳金額明細」；欄位 `物件｜租客｜帳單編號｜帳單ID｜帳務日期｜收款金額｜代收手續費｜最後出帳金額｜備註`；尾三行 `合計` → `出帳手續費（每次 30 元）` → `總出帳金額`。"
-  ],
-  [
-   "JGB｜帳單金流與虛擬帳號",
-   "MARK",
-   "3. 無主入帳（`❌ 銀行有、系統無`，role_id 空）填「確認出款」要擋：`read_correction_xlsx()` 與 `build_payout()` 兩層都擋，叫他改填 `保留下期`／`確認不出款`。"
-  ],
-  [
-   "JGB｜自動接單 watcher",
-   "MARK",
-   "- `dev_on_cloud.py`：`ship()`、`data_only_no_staging()`、`synth_meta(**extra)`"
-  ],
-  [
-   "JGB｜電錶IoT與門鎖",
-   "MARK",
-   "2. build 中途 session 被關＝build 死且 manifest 停在被刪（`git status` 見 ` D public/dist/manifest.json`）。用 `setsid nohup bash -c \"... ; touch <done-marker>\" </dev/null &`，再 `until [ -f <done-marker> ]; do sleep 10; done`"
+   "3. 無主入帳（`❌ 銀行有、系統無`）填「確認出款」在 `read_correction_xlsx()` 與 `build_payout()` 兩層擋，改填 `保留下期`／`確認不出款`。"
   ],
   [
    "STILLA｜指令｜Stilla 套印與報價",
@@ -94,16 +69,6 @@
    "STILLA｜範本｜改-南山商火要保書",
    "MARK",
    "- 聯邦通路不壓 Stilla 本人簽名：`p1_note`/`bank` 含「聯邦」且 `solicitor_signature` 指到 `stilla.png` 時，`compute()` 把該 key 拿掉，引擎 `if not src: continue` 自動略過 p1/p4 兩個招攬人員簽名框（stderr 印 `[info] 聯邦通路：略過 Stilla 本人簽名`）。只擋 stilla.png，明確給別人的簽名圖照壓（那格由聯邦端招攬人員親簽）。"
-  ],
-  [
-   "STILLA｜規則｜通用資料解析（Stilla）",
-   "MARK",
-   "- 引擎自動補（2026-10-13 起 `apply_apply_dates()`）：住火逐行版／舊版／簽回表格版的 `apply_date_year/month/day`、批改申請書的 `apply_year/month/day`，三欄全沒給才補，stderr 印 `[note] 要保／申請日期未給，帶當天`。"
-  ],
-  [
-   "STILLA｜規則｜通用資料解析（Stilla）",
-   "MARK",
-   "你要做的是看 stderr：`[note] 保費/保額自動補算` ＝有補到；`[warn] 保費未補算：缺 …` ＝資料不齊，補齊重跑或請 Stilla 給，**不可留白送出**。自己算或核對："
   ]
  ]
 }
